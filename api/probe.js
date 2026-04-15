@@ -15,7 +15,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: 'Rispondi solo con il nome del modello che sei.' }],
-        max_tokens: 30,
+        max_completion_tokens: 30,
       }),
       signal: AbortSignal.timeout(10000),
     })
