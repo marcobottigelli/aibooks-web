@@ -222,6 +222,22 @@ function getDestinationKeywords(dest) {
   return [d] // fallback: la destinazione stessa come keyword
 }
 
+// ── Confronto autori: verifica che il cognome del candidato sia nell'autore trovato ─
+// Usa solo il cognome (ultima parola) per tollerare varianti di nome/traduzione.
+// Ritorna true se i dati sono assenti (evita falsi negativi su DB incompleti).
+function authorMatches(candidateAutore, foundAuthors) {
+  if (!candidateAutore || !foundAuthors?.length) return true
+  const surname = s => (s || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // rimuove accenti
+    .replace(/[^\w\s]/g, ' ').trim().split(/\s+/).pop()
+  const cSurname = surname(candidateAutore)
+  if (!cSurname || cSurname.length < 3) return true
+  return foundAuthors.some(a => {
+    const fSurname = surname(a)
+    return fSurname.includes(cSurname) || cSurname.includes(fSurname)
+  })
+}
+
 // ── Confronto titoli: verifica che il titolo trovato corrisponda a quello cercato ─
 // Normalizza, rimuove articoli e punteggiatura, poi controlla sovrapposizione parole.
 function titlesMatch(candidate, found) {
@@ -255,18 +271,18 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
   const q = encodeURIComponent(`intitle:${searchTitle} inauthor:${autore}`)
   const gbKey = process.env.GOOGLE_BOOKS_API_KEY
 
-  // Recupera sempre title + subtitle per il confronto; aggiunge description/categories se c'è destinazione
-  const baseFields = 'totalItems,items(volumeInfo/title,volumeInfo/subtitle)'
+  // Recupera sempre title + subtitle + authors per il confronto; aggiunge description/categories se c'è destinazione
+  const baseFields = 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/authors)'
   const fields = destinazione
-    ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/description,volumeInfo/categories)'
+    ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/authors,volumeInfo/description,volumeInfo/categories)'
     : baseFields
 
   const gbUrl = gbKey
     ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
     : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}`
 
-  // OL: chiede anche il titolo per verificarlo
-  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key,title`
+  // OL: chiede titolo e autore per verificarli
+  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key,title,author_name`
 
   const [gbResult, olResult] = await Promise.allSettled([
     fetch(gbUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) })
@@ -278,29 +294,35 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
   const gbData = gbResult.status === 'fulfilled' ? gbResult.value : null
   const olData = olResult.status === 'fulfilled' ? olResult.value : null
 
-  // ── Verifica GB: esiste E il titolo restituito corrisponde al candidato ───────
+  // ── Verifica GB: titolo E autore corrispondono al candidato ────────────────────
   let gbVerified = false
   if ((gbData?.totalItems ?? 0) > 0 && gbData?.items?.[0]?.volumeInfo?.title) {
-    const gbTitle = gbData.items[0].volumeInfo.title
-    gbVerified = titlesMatch(searchTitle, gbTitle)
-    if (!gbVerified) {
-      // Prova anche col titolo italiano come fallback (libri tradotti)
-      if (titoloItaliano && titoloItaliano !== searchTitle)
-        gbVerified = titlesMatch(titoloItaliano, gbTitle)
-    }
-    if (!gbVerified)
+    const v = gbData.items[0].volumeInfo
+    const gbTitle = v.title
+    const gbAuthors = v.authors || []
+    const titleOk = titlesMatch(searchTitle, gbTitle) ||
+      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, gbTitle))
+    const authorOk = authorMatches(autore, gbAuthors)
+    gbVerified = titleOk && authorOk
+    if (!titleOk)
       console.log(`[chat] GB title mismatch: cercato "${searchTitle}", trovato "${gbTitle}"`)
+    else if (!authorOk)
+      console.log(`[chat] GB author mismatch: cercato "${autore}", trovato "${gbAuthors.join(', ')}" per "${gbTitle}"`)
   }
 
-  // ── Verifica OL: esiste E il titolo restituito corrisponde al candidato ───────
+  // ── Verifica OL: titolo E autore corrispondono al candidato ────────────────────
   let olVerified = false
   if ((olData?.numFound ?? 0) > 0 && olData?.docs?.[0]?.title) {
     const olTitle = olData.docs[0].title
-    olVerified = titlesMatch(searchTitle, olTitle)
-    if (!olVerified && titoloItaliano && titoloItaliano !== searchTitle)
-      olVerified = titlesMatch(titoloItaliano, olTitle)
-    if (!olVerified)
+    const olAuthors = olData.docs[0].author_name || []
+    const titleOk = titlesMatch(searchTitle, olTitle) ||
+      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, olTitle))
+    const authorOk = authorMatches(autore, olAuthors)
+    olVerified = titleOk && authorOk
+    if (!titleOk)
       console.log(`[chat] OL title mismatch: cercato "${searchTitle}", trovato "${olTitle}"`)
+    else if (!authorOk)
+      console.log(`[chat] OL author mismatch: cercato "${autore}", trovato "${olAuthors.join(', ')}" per "${olTitle}"`)
   }
 
   if (!gbVerified && !olVerified) return false
