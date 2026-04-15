@@ -133,7 +133,7 @@ Rispondi ESCLUSIVAMENTE con un oggetto JSON nel formato: {"libri": [...]}
 Se la conversazione è ancora nella fase domande (D1-D4 non ancora completata),
 rispondi con {"libri": []}.
 Se invece tutte le domande sono state poste e l'utente ha dato la risposta finale
-(es. "No grazie, procedi", oppure ha scritto dettagli aggiuntivi), fornisci 12 candidati.
+(es. "No grazie, procedi", oppure ha scritto dettagli aggiuntivi), fornisci 15 candidati.
 Applica FASE 0, Condizioni A, B, C a ciascuno prima di includerlo.
 Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
   "titolo_italiano"  — titolo come si chiama in italiano (traduzione o originale italiano)
@@ -151,8 +151,8 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
           { role: 'system', content: systemPrompt + suffix },
           ...messages.slice(-14),
         ],
-        max_tokens: 900,
-        temperature: 0.2,
+        max_tokens: 1100,
+        temperature: 0.35,
         response_format: { type: 'json_object' },
       }),
       signal: AbortSignal.timeout(22000),
@@ -169,28 +169,33 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
 // ── Alias geografici per la verifica della destinazione ──────────────────────
 // Mappa le destinazioni comuni alle keyword rilevanti in inglese e italiano.
 const DEST_KEYWORDS = {
-  'istanbul':    ['istanbul', 'constantinople', 'costantinopoli', 'ottoman', 'ottomano', 'turkey', 'turchia', 'bosphorus', 'bosforo'],
-  'parigi':      ['paris', 'parigi', 'france', 'francia', 'french', 'seine', 'senna'],
-  'paris':       ['paris', 'parigi', 'france', 'francia', 'french'],
-  'londra':      ['london', 'londra', 'england', 'inghilterra', 'britain', 'british'],
-  'london':      ['london', 'londra', 'england', 'inghilterra', 'britain'],
-  'tokyo':       ['tokyo', 'japan', 'giappone', 'japanese'],
-  'giappone':    ['japan', 'giappone', 'japanese', 'tokyo', 'kyoto', 'osaka'],
-  'new york':    ['new york', 'manhattan', 'brooklyn', 'nyc'],
-  'roma':        ['rome', 'roma', 'roman', 'romano', 'italy', 'italia'],
-  'rome':        ['rome', 'roma', 'roman', 'italy'],
-  'berlino':     ['berlin', 'berlino', 'germany', 'germania', 'german'],
-  'berlin':      ['berlin', 'berlino', 'germany'],
-  'madrid':      ['madrid', 'spain', 'spagna', 'spanish'],
-  'india':       ['india', 'indian', 'indiano', 'bombay', 'mumbai', 'delhi', 'calcutta'],
-  'cina':        ['china', 'cina', 'chinese', 'cinese', 'beijing', 'shanghai'],
-  'china':       ['china', 'cina', 'chinese', 'beijing', 'shanghai'],
-  'messico':     ['mexico', 'messico', 'mexican', 'messicano'],
-  'mexico':      ['mexico', 'messico', 'mexican'],
-  'argentina':   ['argentina', 'argentine', 'buenos aires', 'patagonia'],
-  'grecia':      ['greece', 'grecia', 'greek', 'greco', 'athens', 'atene'],
-  'marocco':     ['morocco', 'marocco', 'marrakech', 'fez', 'casablanca'],
-  'iran':        ['iran', 'persia', 'tehran', 'persian'],
+  'istanbul':    ['istanbul', 'stamboul', 'stambul', 'constantinople', 'costantinopoli', 'byzantium', 'byzantine', 'bisanzio', 'ottoman', 'ottomano', 'turkey', 'turchia', 'turkish', 'turco', 'bosphorus', 'bosphore', 'bosforo', 'anatolia', 'anatolian', 'topkapi', 'galata', 'beyoglu'],
+  'parigi':      ['paris', 'parigi', 'france', 'francia', 'french', 'francese', 'seine', 'senna', 'montmartre', 'montparnasse', 'marais', 'louvre'],
+  'paris':       ['paris', 'parigi', 'france', 'francia', 'french', 'francese', 'seine', 'montmartre'],
+  'londra':      ['london', 'londra', 'england', 'inghilterra', 'britain', 'british', 'english', 'thames', 'tamigi', 'soho', 'whitechapel'],
+  'london':      ['london', 'londra', 'england', 'inghilterra', 'britain', 'british', 'thames'],
+  'tokyo':       ['tokyo', 'japan', 'giappone', 'japanese', 'giapponese', 'edo', 'kyoto', 'osaka', 'shinjuku'],
+  'giappone':    ['japan', 'giappone', 'japanese', 'giapponese', 'tokyo', 'kyoto', 'osaka', 'edo', 'samurai'],
+  'new york':    ['new york', 'manhattan', 'brooklyn', 'bronx', 'harlem', 'nyc'],
+  'roma':        ['rome', 'roma', 'roman', 'romano', 'italy', 'italia', 'trastevere', 'vaticano', 'colosseo'],
+  'rome':        ['rome', 'roma', 'roman', 'italy', 'italia', 'trastevere'],
+  'berlino':     ['berlin', 'berlino', 'germany', 'germania', 'german', 'tedesco', 'weimar', 'reichstag'],
+  'berlin':      ['berlin', 'berlino', 'germany', 'germania', 'german'],
+  'madrid':      ['madrid', 'spain', 'spagna', 'spanish', 'spagnolo', 'castilla', 'iberia'],
+  'india':       ['india', 'indian', 'indiano', 'bombay', 'mumbai', 'delhi', 'calcutta', 'kolkata', 'ganges', 'gange', 'rajasthan', 'bengal'],
+  'cina':        ['china', 'cina', 'chinese', 'cinese', 'beijing', 'shanghai', 'peking', 'yangtze', 'canton'],
+  'china':       ['china', 'cina', 'chinese', 'beijing', 'shanghai', 'peking'],
+  'messico':     ['mexico', 'messico', 'mexican', 'messicano', 'aztec', 'azteco', 'maya', 'oaxaca'],
+  'mexico':      ['mexico', 'messico', 'mexican', 'aztec', 'maya'],
+  'argentina':   ['argentina', 'argentine', 'argentino', 'buenos aires', 'patagonia', 'pampas'],
+  'grecia':      ['greece', 'grecia', 'greek', 'greco', 'athens', 'atene', 'aegean', 'egeo', 'hellas', 'olimpo'],
+  'marocco':     ['morocco', 'marocco', 'moroccan', 'marrakech', 'marrakesh', 'fez', 'casablanca', 'sahara', 'maghreb'],
+  'iran':        ['iran', 'persia', 'persian', 'persiano', 'tehran', 'isfahan', 'shiraz'],
+  'egitto':      ['egypt', 'egitto', 'egyptian', 'egiziano', 'cairo', 'nile', 'nilo', 'faraone', 'pharaoh'],
+  'egypt':       ['egypt', 'egitto', 'egyptian', 'cairo', 'nile', 'pharaoh'],
+  'vietnam':     ['vietnam', 'vietnamese', 'saigon', 'hanoi', 'indochina', 'indocina', 'mekong'],
+  'cuba':        ['cuba', 'cuban', 'cubano', 'havana', 'avana', 'caribbean', 'caraibi'],
+  'israele':     ['israel', 'israele', 'jerusalem', 'gerusalemme', 'tel aviv', 'palestina', 'palestine'],
 }
 
 function getDestinationKeywords(dest) {
@@ -247,6 +252,12 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
     const v = gbData.items[0].volumeInfo || {}
     const hasDescription = !!(v.description || (v.categories && v.categories.length > 0))
 
+    // Se il titolo originale del candidato stesso contiene la destinazione → passa sempre
+    const candidateTitleLower = searchTitle.toLowerCase()
+    const keywords = getDestinationKeywords(destinazione)
+    const titleContainsDest = keywords.some(kw => candidateTitleLower.includes(kw.toLowerCase()))
+    if (titleContainsDest) return true  // titolo autoesplicativo, nessun dubbio
+
     if (hasDescription) {
       const text = [
         v.title || '', v.subtitle || '',
@@ -254,7 +265,6 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
         ...(v.categories || []),
       ].join(' ').toLowerCase()
 
-      const keywords = getDestinationKeywords(destinazione)
       const relevant = keywords.some(kw => text.includes(kw.toLowerCase()))
 
       if (!relevant) {
