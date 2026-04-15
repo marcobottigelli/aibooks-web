@@ -708,8 +708,9 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
       return res.status(500).json({ error: 'Risposta non valida da OpenAI' })
     }
     if (!openaiRes.ok) {
-      console.error('[chat] OpenAI error:', data.error?.message)
-      return res.status(500).json({ error: 'Errore del servizio AI. Riprova tra qualche secondo.' })
+      const errMsg = data.error?.message || 'unknown'
+      console.error('[chat] OpenAI error:', errMsg)
+      return res.status(500).json({ error: errMsg })
     }
     const content = data.choices?.[0]?.message?.content
     if (!content) return res.status(500).json({ error: 'Risposta AI vuota' })
