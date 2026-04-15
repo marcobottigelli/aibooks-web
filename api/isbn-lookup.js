@@ -1,7 +1,7 @@
 // api/isbn-lookup.js — ISBN lookup con Google Books + Open Library + covers multipli
 export const config = { maxDuration: 30 }
 
-import { fetchAllCovers, olCoverFromIsbn, extractWorkOlid } from './_cover-utils.js'
+import { fetchAllCovers, olCoverFromIsbn, amazonCoverFromIsbn, extractWorkOlid } from './_cover-utils.js'
 
 async function aiLookupMeta(titolo, autori, isbn) {
   const apiKey = process.env.OPENAI_API_KEY
@@ -173,6 +173,19 @@ export default async function handler(req, res) {
       genere: aiMeta.genere ? [aiMeta.genere] : [],
       lingua_originale: lingua,
       pagine: olEditionData.number_of_pages || null,
+    })
+  }
+
+  // ── 4. Fallback Amazon CDN — anche senza metadati, almeno la copertina ───────
+  // Utile per libri di piccoli editori non indicizzati in GB/OL
+  const amazonCover = await amazonCoverFromIsbn(cleanIsbn)
+  if (amazonCover) {
+    return res.json({
+      source: 'amazon',
+      titolo: null, autore: [], casa_editrice: null,
+      anno_pubblicazione: null, descrizione: null,
+      copertina: amazonCover, covers: [amazonCover],
+      genere: [], lingua_originale: null, pagine: null,
     })
   }
 
