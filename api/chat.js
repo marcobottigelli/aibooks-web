@@ -152,7 +152,6 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
           ...messages.slice(-14),
         ],
         max_completion_tokens: 1100,
-        temperature: 0.35,
         response_format: { type: 'json_object' },
       }),
       signal: AbortSignal.timeout(22000),
@@ -662,7 +661,6 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
           ...messages.slice(-14),
         ],
         max_completion_tokens: 4000,
-        temperature: 0.4,
       }),
     })
 
@@ -672,7 +670,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
     }
     if (!openaiRes.ok) {
       console.error('[chat] OpenAI error:', data.error?.message)
-      return res.status(500).json({ error: data.error?.message || 'Errore del servizio AI. Riprova tra qualche secondo.' })
+      return res.status(500).json({ error: 'Errore del servizio AI. Riprova tra qualche secondo.' })
     }
     const content = data.choices?.[0]?.message?.content
     if (!content) return res.status(500).json({ error: 'Risposta AI vuota' })
