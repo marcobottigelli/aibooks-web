@@ -141,29 +141,47 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
   "autore"           — "Nome Cognome" dell'autore principale
   "anno"             — anno di prima pubblicazione (numero intero, es. 1985)`
 
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [
-          { role: 'system', content: systemPrompt + suffix },
-          ...messages.slice(-14),
-        ],
-        max_tokens: 1100,
-        temperature: 0.35,
-        response_format: { type: 'json_object' },
-      }),
-      signal: AbortSignal.timeout(22000),
-    })
-    if (!res.ok) return []
-    const data = await res.json()
-    const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}')
-    return Array.isArray(parsed.libri) ? parsed.libri : []
-  } catch (_) {
-    return []
+  const body = JSON.stringify({
+    model: 'gpt-4.1',
+    messages: [
+      { role: 'system', content: systemPrompt + suffix },
+      ...messages.slice(-14),
+    ],
+    max_tokens: 1100,
+    temperature: 0.35,
+    response_format: { type: 'json_object' },
+  })
+  const P1_RETRIES = 1
+  for (let attempt = 0; attempt <= P1_RETRIES; attempt++) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body,
+        signal: AbortSignal.timeout(25000),
+      })
+      if (res.status === 429) {
+        let retryMs = 5000
+        try {
+          const d = await res.json()
+          const m = (d.error?.message || '').match(/try again in ([\d.]+)s/)
+          if (m) retryMs = Math.ceil(parseFloat(m[1]) * 1000) + 500
+        } catch (_) {}
+        if (attempt < P1_RETRIES) {
+          await new Promise(r => setTimeout(r, retryMs))
+          continue
+        }
+        return []
+      }
+      if (!res.ok) return []
+      const data = await res.json()
+      const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}')
+      return Array.isArray(parsed.libri) ? parsed.libri : []
+    } catch (_) {
+      return []
+    }
   }
+  return []
 }
 
 // ── Alias geografici per la verifica della destinazione ──────────────────────
