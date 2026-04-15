@@ -258,10 +258,12 @@ function authorMatches(candidateAutore, foundAuthors) {
 
 // ── Confronto titoli: verifica che il titolo trovato corrisponda a quello cercato ─
 // Normalizza, rimuove articoli e punteggiatura, poi controlla sovrapposizione parole.
-function titlesMatch(candidate, found) {
+// threshold: 0.55 default (autore verificato), 0.9 se autore assente nel DB
+function titlesMatch(candidate, found, threshold = 0.55) {
   const stop = new Set(['il','lo','la','i','gli','le','un','una','uno','the','a','an',
     'de','del','della','dei','degli','delle','di','da','in','e','ed','el','les','der','die','das'])
   const norm = s => (s || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w\s]/g, ' ').split(/\s+/)
     .filter(w => w.length > 2 && !stop.has(w))
   const cWords = norm(candidate)
@@ -273,9 +275,9 @@ function titlesMatch(candidate, found) {
   const fStr = [...fWords].join(' ')
   const cStr = cWords.join(' ')
   if (fStr.includes(cStr) || cStr.includes(fStr)) return true
-  // Almeno il 55% delle parole significative del candidato compaiono nel trovato
+  // Overlap pesato: se autore assente nel DB richiede soglia alta
   const matches = cWords.filter(w => fWords.has(w))
-  return matches.length / cWords.length >= 0.55
+  return matches.length / cWords.length >= threshold
 }
 
 // ── Fase 2: verifica un libro contro Google Books + Open Library ──────────────
@@ -320,12 +322,14 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
     const v = gbData.items[0].volumeInfo
     const gbTitle = v.title
     const gbAuthors = v.authors || []
-    const titleOk = titlesMatch(searchTitle, gbTitle) ||
-      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, gbTitle))
+    // Se GB non restituisce autori, richiede corrispondenza titolo al 90%
+    const thr = gbAuthors.length > 0 ? 0.55 : 0.9
+    const titleOk = titlesMatch(searchTitle, gbTitle, thr) ||
+      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, gbTitle, thr))
     const authorOk = authorMatches(autore, gbAuthors)
     gbVerified = titleOk && authorOk
     if (!titleOk)
-      console.log(`[chat] GB title mismatch: cercato "${searchTitle}", trovato "${gbTitle}"`)
+      console.log(`[chat] GB title mismatch (thr=${thr}): cercato "${searchTitle}", trovato "${gbTitle}"`)
     else if (!authorOk)
       console.log(`[chat] GB author mismatch: cercato "${autore}", trovato "${gbAuthors.join(', ')}" per "${gbTitle}"`)
   }
@@ -335,12 +339,14 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
   if ((olData?.numFound ?? 0) > 0 && olData?.docs?.[0]?.title) {
     const olTitle = olData.docs[0].title
     const olAuthors = olData.docs[0].author_name || []
-    const titleOk = titlesMatch(searchTitle, olTitle) ||
-      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, olTitle))
+    // Se OL non restituisce autori, richiede corrispondenza titolo al 90%
+    const thr = olAuthors.length > 0 ? 0.55 : 0.9
+    const titleOk = titlesMatch(searchTitle, olTitle, thr) ||
+      (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, olTitle, thr))
     const authorOk = authorMatches(autore, olAuthors)
     olVerified = titleOk && authorOk
     if (!titleOk)
-      console.log(`[chat] OL title mismatch: cercato "${searchTitle}", trovato "${olTitle}"`)
+      console.log(`[chat] OL title mismatch (thr=${thr}): cercato "${searchTitle}", trovato "${olTitle}"`)
     else if (!authorOk)
       console.log(`[chat] OL author mismatch: cercato "${autore}", trovato "${olAuthors.join(', ')}" per "${olTitle}"`)
   }
