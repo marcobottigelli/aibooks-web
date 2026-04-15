@@ -15,19 +15,31 @@ export default async function handler(req, res) {
   if (!supabaseUrl || !serviceKey) return res.status(500).json({ error: 'Config server mancante' })
 
   try {
-    const r = await fetch(
-      `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email.trim().toLowerCase())}`,
-      {
-        headers: {
-          'apikey': serviceKey,
-          'Authorization': `Bearer ${serviceKey}`,
-        },
+    const normalizedEmail = email.trim().toLowerCase()
+    // Supabase non filtra per email sul list endpoint — paginiamo finché
+    // troviamo una corrispondenza o esauriamo gli utenti
+    let page = 1
+    const perPage = 50
+    while (true) {
+      const r = await fetch(
+        `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=${perPage}`,
+        {
+          headers: {
+            'apikey': serviceKey,
+            'Authorization': `Bearer ${serviceKey}`,
+          },
+        }
+      )
+      if (!r.ok) return res.status(500).json({ error: 'Errore Supabase' })
+      const data = await r.json()
+      const users = Array.isArray(data.users) ? data.users : []
+      if (users.some(u => u.email?.toLowerCase() === normalizedEmail)) {
+        return res.json({ exists: true })
       }
-    )
-    if (!r.ok) return res.status(500).json({ error: 'Errore Supabase' })
-    const data = await r.json()
-    const exists = Array.isArray(data.users) ? data.users.length > 0 : false
-    return res.json({ exists })
+      if (users.length < perPage) break // ultima pagina
+      page++
+    }
+    return res.json({ exists: false })
   } catch (e) {
     console.error('[check-email]', e.message)
     return res.status(500).json({ error: 'Errore interno' })
