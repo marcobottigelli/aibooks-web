@@ -122,6 +122,7 @@ export default async function handler(req, res) {
   // ── System prompt ───────────────────────────────────────────────────────────
   const systemPrompt = `Sei l'assistente letterario personale di ${userName}.
 LINGUA DI RISPOSTA — REGOLA ASSOLUTA: Scrivi TUTTO in ${responseLang} — domande, opzioni numerate, suggerimenti, note, qualsiasi parola. Non importa in che lingua scrive l'utente: tu rispondi SEMPRE e SOLO in ${responseLang}. Le domande D1/D2/D3/D4 e le loro opzioni sono template in italiano che devi tradurre in ${responseLang} prima di mostrarle.
+FORMATO DOMANDE — REGOLA ASSOLUTA: NON includere mai le etichette D1, D2, D2b, D2c, D2d, D3, D4 nel testo mostrato all'utente. Quelle etichette sono solo riferimenti interni per te. Mostra SOLO il testo della domanda e le opzioni numerate.
 Tono caldo e appassionato.
 
 ══ FLUSSO SUGGERIMENTI — segui questo ordine RIGOROSO ══
