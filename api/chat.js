@@ -146,7 +146,7 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt + suffix },
           ...messages.slice(-14),
@@ -166,19 +166,62 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
   }
 }
 
+// ── Alias geografici per la verifica della destinazione ──────────────────────
+// Mappa le destinazioni comuni alle keyword rilevanti in inglese e italiano.
+const DEST_KEYWORDS = {
+  'istanbul':    ['istanbul', 'constantinople', 'costantinopoli', 'ottoman', 'ottomano', 'turkey', 'turchia', 'bosphorus', 'bosforo'],
+  'parigi':      ['paris', 'parigi', 'france', 'francia', 'french', 'seine', 'senna'],
+  'paris':       ['paris', 'parigi', 'france', 'francia', 'french'],
+  'londra':      ['london', 'londra', 'england', 'inghilterra', 'britain', 'british'],
+  'london':      ['london', 'londra', 'england', 'inghilterra', 'britain'],
+  'tokyo':       ['tokyo', 'japan', 'giappone', 'japanese'],
+  'giappone':    ['japan', 'giappone', 'japanese', 'tokyo', 'kyoto', 'osaka'],
+  'new york':    ['new york', 'manhattan', 'brooklyn', 'nyc'],
+  'roma':        ['rome', 'roma', 'roman', 'romano', 'italy', 'italia'],
+  'rome':        ['rome', 'roma', 'roman', 'italy'],
+  'berlino':     ['berlin', 'berlino', 'germany', 'germania', 'german'],
+  'berlin':      ['berlin', 'berlino', 'germany'],
+  'madrid':      ['madrid', 'spain', 'spagna', 'spanish'],
+  'india':       ['india', 'indian', 'indiano', 'bombay', 'mumbai', 'delhi', 'calcutta'],
+  'cina':        ['china', 'cina', 'chinese', 'cinese', 'beijing', 'shanghai'],
+  'china':       ['china', 'cina', 'chinese', 'beijing', 'shanghai'],
+  'messico':     ['mexico', 'messico', 'mexican', 'messicano'],
+  'mexico':      ['mexico', 'messico', 'mexican'],
+  'argentina':   ['argentina', 'argentine', 'buenos aires', 'patagonia'],
+  'grecia':      ['greece', 'grecia', 'greek', 'greco', 'athens', 'atene'],
+  'marocco':     ['morocco', 'marocco', 'marrakech', 'fez', 'casablanca'],
+  'iran':        ['iran', 'persia', 'tehran', 'persian'],
+}
+
+function getDestinationKeywords(dest) {
+  const d = dest.toLowerCase().trim()
+  // Cerca prima una corrispondenza esatta, poi controlla se la chiave è una sottostringa
+  if (DEST_KEYWORDS[d]) return DEST_KEYWORDS[d]
+  for (const [key, kws] of Object.entries(DEST_KEYWORDS)) {
+    if (d.includes(key) || key.includes(d)) return kws
+  }
+  return [d] // fallback: la destinazione stessa come keyword
+}
+
 // ── Fase 2: verifica un libro contro Google Books + Open Library ──────────────
-// Cerca per titolo originale + autore in entrambi i database in parallelo.
-// Ritorna true se trovato in almeno uno dei due.
-async function searchBookExists(titoloOriginale, titoloItaliano, autore) {
+// Se è attiva una destinazione, legge anche la descrizione/categorie del libro
+// e verifica che la destinazione sia effettivamente menzionata.
+async function searchBookExists(titoloOriginale, titoloItaliano, autore, destinazione = null) {
   const TIMEOUT = 5000
   const searchTitle = titoloOriginale || titoloItaliano || ''
   if (!searchTitle || !autore) return false
 
   const q = encodeURIComponent(`intitle:${searchTitle} inauthor:${autore}`)
   const gbKey = process.env.GOOGLE_BOOKS_API_KEY
+
+  // Se c'è una destinazione, recupera anche titolo/descrizione/categorie per verificarla
+  const fields = destinazione
+    ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/description,volumeInfo/categories)'
+    : 'totalItems'
+
   const gbUrl = gbKey
-    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=totalItems&key=${gbKey}`
-    : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=totalItems`
+    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
+    : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}`
 
   const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key`
 
@@ -189,9 +232,39 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore) {
       .then(r => r.ok ? r.json() : null).catch(() => null),
   ])
 
-  const gbFound = gbResult.status === 'fulfilled' && (gbResult.value?.totalItems ?? 0) > 0
+  const gbData  = gbResult.status === 'fulfilled' ? gbResult.value : null
+  const gbFound = (gbData?.totalItems ?? 0) > 0
   const olFound = olResult.status === 'fulfilled' && (olResult.value?.numFound ?? 0) > 0
-  return gbFound || olFound
+
+  if (!gbFound && !olFound) return false
+
+  // ── Verifica di pertinenza geografica ──────────────────────────────────────
+  // Se c'è una destinazione e Google Books ha restituito metadati, controlla
+  // che la descrizione/categorie/titolo menzionino la destinazione.
+  // Se la descrizione è assente (Google Books non la fornisce sempre),
+  // lasciamo passare il libro — evita falsi negativi su libri ben noti.
+  if (destinazione && gbFound && gbData?.items?.[0]) {
+    const v = gbData.items[0].volumeInfo || {}
+    const hasDescription = !!(v.description || (v.categories && v.categories.length > 0))
+
+    if (hasDescription) {
+      const text = [
+        v.title || '', v.subtitle || '',
+        v.description || '',
+        ...(v.categories || []),
+      ].join(' ').toLowerCase()
+
+      const keywords = getDestinationKeywords(destinazione)
+      const relevant = keywords.some(kw => text.includes(kw.toLowerCase()))
+
+      if (!relevant) {
+        console.log(`[chat] scartato (non riguarda "${destinazione}"): "${searchTitle}" — ${autore}`)
+        return false
+      }
+    }
+  }
+
+  return true
 }
 
 export default async function handler(req, res) {
@@ -465,7 +538,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
       // ── Fase 2: validazione parallela su Google Books + Open Library ─────────
       const results = await Promise.all(
         candidates.map(async (b) => {
-          const found = await searchBookExists(b.titolo_originale, b.titolo_italiano, b.autore)
+          const found = await searchBookExists(b.titolo_originale, b.titolo_italiano, b.autore, constraints.destinazione)
           return found ? b : null
         })
       )
@@ -502,7 +575,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: finalSystemPrompt },
           ...messages.slice(-14),
