@@ -277,12 +277,14 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
     ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/authors,volumeInfo/description,volumeInfo/categories)'
     : baseFields
 
+  // GB: cerca solo per titolo (senza inauthor) per evitare bias nella verifica autore
+  const qTitleOnly = encodeURIComponent(`intitle:${searchTitle}`)
   const gbUrl = gbKey
-    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
-    : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}`
+    ? `https://www.googleapis.com/books/v1/volumes?q=${qTitleOnly}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
+    : `https://www.googleapis.com/books/v1/volumes?q=${qTitleOnly}&maxResults=1&fields=${encodeURIComponent(fields)}`
 
-  // OL: chiede titolo e autore per verificarli
-  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key,title,author_name`
+  // OL: cerca solo per titolo (senza author) per evitare bias nella verifica autore
+  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&limit=1&fields=key,title,author_name`
 
   const [gbResult, olResult] = await Promise.allSettled([
     fetch(gbUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) })
