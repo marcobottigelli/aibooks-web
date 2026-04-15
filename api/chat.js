@@ -82,6 +82,78 @@ function sanitize(str) {
   return String(str).replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7E\u00C0-\u024F]/g, c => c).slice(0, 300)
 }
 
+// ── Fase 1: chiede all'AI una lista candidati in JSON strutturato ─────────────
+// Usa response_format json_object per avere output affidabile da parsare.
+// Ritorna [] se la conversazione è ancora nella fase domande (D1-D4 incompleta).
+async function getBookCandidates(systemPrompt, messages, apiKey) {
+  const suffix = `
+
+══ MODALITÀ RICERCA CANDIDATI ══
+Rispondi ESCLUSIVAMENTE con un oggetto JSON nel formato: {"libri": [...]}
+Se la conversazione è ancora nella fase domande (D1-D4 non ancora completata),
+rispondi con {"libri": []}.
+Se invece tutte le domande sono state poste e l'utente ha dato la risposta finale
+(es. "No grazie, procedi", oppure ha scritto dettagli aggiuntivi), fornisci 12 candidati.
+Applica FASE 0, Condizioni A, B, C a ciascuno prima di includerlo.
+Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
+  "titolo_italiano"  — titolo come si chiama in italiano (traduzione o originale italiano)
+  "titolo_originale" — titolo ESATTO nella lingua originale di pubblicazione
+  "autore"           — "Nome Cognome" dell'autore principale
+  "anno"             — anno di prima pubblicazione (numero intero, es. 1985)`
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt + suffix },
+          ...messages.slice(-14),
+        ],
+        max_tokens: 900,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+      }),
+      signal: AbortSignal.timeout(22000),
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}')
+    return Array.isArray(parsed.libri) ? parsed.libri : []
+  } catch (_) {
+    return []
+  }
+}
+
+// ── Fase 2: verifica un libro contro Google Books + Open Library ──────────────
+// Cerca per titolo originale + autore in entrambi i database in parallelo.
+// Ritorna true se trovato in almeno uno dei due.
+async function searchBookExists(titoloOriginale, titoloItaliano, autore) {
+  const TIMEOUT = 5000
+  const searchTitle = titoloOriginale || titoloItaliano || ''
+  if (!searchTitle || !autore) return false
+
+  const q = encodeURIComponent(`intitle:${searchTitle} inauthor:${autore}`)
+  const gbKey = process.env.GOOGLE_BOOKS_API_KEY
+  const gbUrl = gbKey
+    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=totalItems&key=${gbKey}`
+    : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=totalItems`
+
+  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key`
+
+  const [gbResult, olResult] = await Promise.allSettled([
+    fetch(gbUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) })
+      .then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch(olUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) })
+      .then(r => r.ok ? r.json() : null).catch(() => null),
+  ])
+
+  const gbFound = gbResult.status === 'fulfilled' && (gbResult.value?.totalItems ?? 0) > 0
+  const olFound = olResult.status === 'fulfilled' && (olResult.value?.numFound ?? 0) > 0
+  return gbFound || olFound
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
@@ -341,7 +413,42 @@ ${lettiPerAnnoStr || '(nessuno)'}
 DA LEGGERE — ${nDaLegg} titoli (menzionali solo nella sezione finale se pertinenti):
 ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
 
-  // ── Chiama OpenAI ────────────────────────────────────────────────────────────
+  // ── Fase 1: candidati strutturati in JSON ───────────────────────────────────
+  let validatedBooks = []
+  try {
+    const candidates = await getBookCandidates(systemPrompt, messages, apiKey)
+
+    if (candidates.length > 0) {
+      // ── Fase 2: validazione parallela su Google Books + Open Library ─────────
+      const results = await Promise.all(
+        candidates.map(async (b) => {
+          const found = await searchBookExists(b.titolo_originale, b.titolo_italiano, b.autore)
+          return found ? b : null
+        })
+      )
+      validatedBooks = results.filter(Boolean)
+      console.log(`[chat] candidati: ${candidates.length}, validati: ${validatedBooks.length}`)
+    }
+  } catch (e) {
+    console.warn('[chat] fase candidati/validazione fallita, uso risposta diretta:', e.message)
+  }
+
+  // ── Fase 3: risposta finale ──────────────────────────────────────────────────
+  // Se abbiamo ≥ 3 libri validati, iniettiamoli nel prompt come lista vincolante.
+  // L'AI scrive solo le descrizioni dei libri reali confermati.
+  // Se la validazione restituisce troppo poco (fase domande, o errore), risposta libera.
+  const validatedSection = validatedBooks.length >= 3
+    ? `\n\n══ LIBRI VERIFICATI — proponi SOLO questi, nessun altro ══\n` +
+      `I seguenti ${validatedBooks.length} libri sono stati confermati come reali da Google Books e Open Library.\n` +
+      `Scrivi la risposta seguendo la STRUTTURA RISPOSTA: prima la riga 🔍 Sto cercando:, poi le descrizioni.\n` +
+      `Non aggiungere titoli non presenti in questa lista.\n` +
+      validatedBooks.map(b =>
+        `• "${b.titolo_italiano}"${b.titolo_originale !== b.titolo_italiano ? ` (orig. "${b.titolo_originale}")` : ''} — ${b.autore} (${b.anno})`
+      ).join('\n')
+    : ''
+
+  const finalSystemPrompt = systemPrompt + validatedSection
+
   try {
     const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -352,7 +459,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: systemPrompt },
+          { role: 'system', content: finalSystemPrompt },
           ...messages.slice(-14),
         ],
         max_tokens: 4000,
