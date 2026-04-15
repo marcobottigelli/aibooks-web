@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AiBooks — Conferma account</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f5f5f4;
+      font-family: 'Montserrat', sans-serif;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 48px 40px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+
+    .icon-wrap {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .icon-wrap.success { background: #fef2f2; }
+    .icon-wrap.error   { background: #fee2e2; }
+
+    .icon {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .icon.success { color: #a90707; }
+    .icon.error   { color: #dc2626; }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1c1c1e;
+      margin-bottom: 12px;
+    }
+
+    p {
+      font-size: 15px;
+      color: #6b7280;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .btn {
+      display: inline-block;
+      background: #a90707;
+      color: #fff;
+      border-radius: 10px;
+      padding: 12px 32px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      font-family: 'Montserrat', sans-serif;
+    }
+
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #a90707;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading, #success, #error { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <p>Verifica in corso…</p>
+    </div>
+
+    <div id="success">
+      <div class="icon-wrap success">
+        <span class="icon success">✓</span>
+      </div>
+      <h1>Account confermato!</h1>
+      <p>Il tuo account AiBooks è attivo.<br>Torna all'app e accedi con le tue credenziali.</p>
+      <a id="open-app-btn" href="rivbooks://login-callback" class="btn">Apri AiBooks</a>
+    </div>
+
+    <div id="error">
+      <div class="icon-wrap error">
+        <span class="icon error">✕</span>
+      </div>
+      <h1>Link non valido</h1>
+      <p>Il link di conferma è scaduto o già utilizzato.<br>Torna all'app e, se necessario, registrati di nuovo.</p>
+    </div>
+
+  </div>
+
+  <script>
+    function show(id) {
+      ['loading','success','error'].forEach(function(s) {
+        document.getElementById(s).style.display = s === id ? 'block' : 'none';
+      });
+    }
+
+    show('loading');
+
+    var hash = window.location.hash;
+    var search = window.location.search;
+    var params = new URLSearchParams(search);
+
+    var errorDesc = params.get('error_description') || params.get('error');
+    if (errorDesc) {
+      show('error');
+    } else if (hash && hash.indexOf('access_token') !== -1) {
+      show('success');
+      // Su mobile prova ad aprire l'app passando i token
+      document.getElementById('open-app-btn').href = 'rivbooks://login-callback' + hash;
+      setTimeout(function() {
+        window.location.href = 'rivbooks://login-callback' + hash;
+      }, 800);
+    } else {
+      // Nessun token nell'URL: la conferma è già avvenuta lato Supabase
+      show('success');
+    }
+  </script>
+</body>
+</html>
