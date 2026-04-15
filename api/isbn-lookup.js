@@ -1,5 +1,7 @@
-// api/isbn-lookup.js — ISBN lookup con Google Books + Open Library + OpenAI per metadati
+// api/isbn-lookup.js — ISBN lookup con Google Books + Open Library + covers multipli
 export const config = { maxDuration: 30 }
+
+import { fetchAllCovers, olCoverFromIsbn, extractWorkOlid } from './_cover-utils.js'
 
 async function aiLookupMeta(titolo, autori, isbn) {
   const apiKey = process.env.OPENAI_API_KEY
@@ -50,21 +52,30 @@ export default async function handler(req, res) {
     ? `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}&key=${process.env.GOOGLE_BOOKS_API_KEY}`
     : `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`
 
-  const [gbSettled, olSettled] = await Promise.allSettled([
-    fetch(gbUrl,      { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) }),
+  // Tutte e tre le chiamate in parallelo: GB, OL Books API, OL edition JSON
+  const [gbSettled, olBooksSettled, olEditionSettled] = await Promise.allSettled([
+    fetch(gbUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) }),
     fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${cleanIsbn}&format=json&jscmd=data`,
-          { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) }),
+      { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) }),
+    fetch(`https://openlibrary.org/isbn/${cleanIsbn}.json`,
+      { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) }),
   ])
 
-  let gbData = null, olBook = null
+  let gbData = null, olBook = null, olEditionData = null, workOlid = null
 
   if (gbSettled.status === 'fulfilled' && gbSettled.value.ok) {
     try { gbData = await gbSettled.value.json() } catch (_) {}
   }
-  if (olSettled.status === 'fulfilled' && olSettled.value.ok) {
+  if (olBooksSettled.status === 'fulfilled' && olBooksSettled.value.ok) {
     try {
-      const olRaw = await olSettled.value.json()
-      olBook = olRaw[`ISBN:${cleanIsbn}`] || null
+      const raw = await olBooksSettled.value.json()
+      olBook = raw[`ISBN:${cleanIsbn}`] || null
+    } catch (_) {}
+  }
+  if (olEditionSettled.status === 'fulfilled' && olEditionSettled.value.ok) {
+    try {
+      olEditionData = await olEditionSettled.value.json()
+      workOlid = extractWorkOlid(olEditionData)
     } catch (_) {}
   }
 
@@ -73,82 +84,97 @@ export default async function handler(req, res) {
     const v = gbData.items[0].volumeInfo
     let copertina = null
     if (v.imageLinks) {
-      copertina = (v.imageLinks.large || v.imageLinks.medium || v.imageLinks.thumbnail || null)
+      copertina = v.imageLinks.extraLarge || v.imageLinks.large || v.imageLinks.medium || v.imageLinks.thumbnail || null
       if (copertina) copertina = copertina.replace('&edge=curl', '').replace(/^http:\/\//, 'https://')
     }
+    // Fallback copertina: prova direttamente Open Library per ISBN
+    if (!copertina) copertina = await olCoverFromIsbn(cleanIsbn)
+
     const anno = v.publishedDate ? parseInt(v.publishedDate.substring(0, 4)) || null : null
-    const aiMeta = await aiLookupMeta(v.title, v.authors, cleanIsbn)
+    const [aiMeta, covers] = await Promise.all([
+      aiLookupMeta(v.title, v.authors, cleanIsbn),
+      fetchAllCovers(v.title, v.authors?.[0], copertina, workOlid, cleanIsbn),
+    ])
     return res.json({
-      source: 'google-books', titolo: v.title || null, autore: v.authors || [],
+      source: 'google-books',
+      titolo: v.title || null,
+      autore: v.authors || [],
       casa_editrice: v.publisher || olBook?.publishers?.[0]?.name || aiMeta.casa_editrice,
-      anno_pubblicazione: anno, descrizione: v.description || null, copertina,
+      anno_pubblicazione: anno,
+      descrizione: v.description || null,
+      copertina: covers[0] || copertina,
+      covers,
       genere: aiMeta.genere ? [aiMeta.genere] : [],
-      lingua_originale: v.language || null, pagine: v.pageCount || null,
+      lingua_originale: v.language || null,
+      pagine: v.pageCount || null,
     })
   }
 
   // ── 2. Open Library Books API ─────────────────────────────────────────────
   if (olBook?.title) {
     const autori = (olBook.authors || []).map(a => a.name).filter(Boolean)
-    const aiMeta = await aiLookupMeta(olBook.title, autori, cleanIsbn)
     const anno = olBook.publish_date ? parseInt(String(olBook.publish_date).match(/\d{4}/)?.[0]) || null : null
-    let copertina = null
-    try {
-      const cr = await fetch(`https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`,
-        { method: 'HEAD', signal: AbortSignal.timeout(3000) })
-      if (cr.ok) copertina = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg`
-    } catch (_) {}
+    const primaryCover = await olCoverFromIsbn(cleanIsbn)
+    const [aiMeta, covers] = await Promise.all([
+      aiLookupMeta(olBook.title, autori, cleanIsbn),
+      fetchAllCovers(olBook.title, autori[0], primaryCover, workOlid, cleanIsbn),
+    ])
     return res.json({
-      source: 'open-library', titolo: olBook.title || null, autore: autori,
+      source: 'open-library',
+      titolo: olBook.title || null,
+      autore: autori,
       casa_editrice: olBook.publishers?.[0]?.name || aiMeta.casa_editrice,
-      anno_pubblicazione: anno, descrizione: null, copertina,
-      genere: aiMeta.genere ? [aiMeta.genere] : [], lingua_originale: null,
+      anno_pubblicazione: anno,
+      descrizione: null,
+      copertina: covers[0] || primaryCover,
+      covers,
+      genere: aiMeta.genere ? [aiMeta.genere] : [],
+      lingua_originale: null,
       pagine: olBook.number_of_pages || null,
     })
   }
 
   // ── 3. Open Library edition endpoint ─────────────────────────────────────
-  try {
-    const r = await fetch(`https://openlibrary.org/isbn/${cleanIsbn}.json`,
-      { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(5000) })
-    if (r.ok) {
-      const data = await r.json()
-      if (data.title) {
-        let autori = []
-        if (Array.isArray(data.authors)) {
-          const resolved = await Promise.all(
-            data.authors.slice(0, 3).map(async (a) => {
-              try {
-                const ar = await fetch(`https://openlibrary.org${a.key}.json`, { signal: AbortSignal.timeout(3000) })
-                if (ar.ok) { const ad = await ar.json(); return ad.name || ad.personal_name || null }
-              } catch (_) {}
-              return null
-            })
-          )
-          autori = resolved.filter(Boolean)
-        }
-        let copertina = null
-        try {
-          const cr = await fetch(`https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`,
-            { method: 'HEAD', signal: AbortSignal.timeout(3000) })
-          if (cr.ok) copertina = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg`
-        } catch (_) {}
-        const anno = data.publish_date ? parseInt(String(data.publish_date).match(/\d{4}/)?.[0]) || null : null
-        const lingua = data.languages?.[0]?.key?.split('/').pop() || null
-        const descrizione = data.description
-          ? (typeof data.description === 'string' ? data.description : data.description.value || null)
-          : null
-        const aiMeta = await aiLookupMeta(data.title, autori, cleanIsbn)
-        return res.json({
-          source: 'open-library', titolo: data.title || null, autore: autori,
-          casa_editrice: data.publishers?.[0] || aiMeta.casa_editrice,
-          anno_pubblicazione: anno, descrizione, copertina,
-          genere: aiMeta.genere ? [aiMeta.genere] : [], lingua_originale: lingua,
-          pagine: data.number_of_pages || null,
+  if (olEditionData?.title) {
+    let autori = []
+    if (Array.isArray(olEditionData.authors)) {
+      const resolved = await Promise.all(
+        olEditionData.authors.slice(0, 3).map(async (a) => {
+          try {
+            const ar = await fetch(`https://openlibrary.org${a.key}.json`,
+              { signal: AbortSignal.timeout(3000) })
+            if (ar.ok) { const ad = await ar.json(); return ad.name || ad.personal_name || null }
+          } catch (_) {}
+          return null
         })
-      }
+      )
+      autori = resolved.filter(Boolean)
     }
-  } catch (e) { console.error('[OL edition]', e.message) }
+    const anno = olEditionData.publish_date
+      ? parseInt(String(olEditionData.publish_date).match(/\d{4}/)?.[0]) || null : null
+    const lingua = olEditionData.languages?.[0]?.key?.split('/').pop() || null
+    const descrizione = olEditionData.description
+      ? (typeof olEditionData.description === 'string' ? olEditionData.description : olEditionData.description.value || null)
+      : null
+    const primaryCover = await olCoverFromIsbn(cleanIsbn)
+    const [aiMeta, covers] = await Promise.all([
+      aiLookupMeta(olEditionData.title, autori, cleanIsbn),
+      fetchAllCovers(olEditionData.title, autori[0], primaryCover, workOlid, cleanIsbn),
+    ])
+    return res.json({
+      source: 'open-library',
+      titolo: olEditionData.title || null,
+      autore: autori,
+      casa_editrice: olEditionData.publishers?.[0] || aiMeta.casa_editrice,
+      anno_pubblicazione: anno,
+      descrizione,
+      copertina: covers[0] || primaryCover,
+      covers,
+      genere: aiMeta.genere ? [aiMeta.genere] : [],
+      lingua_originale: lingua,
+      pagine: olEditionData.number_of_pages || null,
+    })
+  }
 
   return res.status(404).json({ error: 'not_found' })
 }

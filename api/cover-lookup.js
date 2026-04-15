@@ -1,43 +1,71 @@
 // api/cover-lookup.js — Riconoscimento libri da foto via GPT-4o-mini Vision
 export const config = { maxDuration: 30 }
 
-// Lookup per ISBN (logica semplificata da isbn-lookup.js)
+import { fetchAllCovers, extractWorkOlid } from './_cover-utils.js'
+
+// ── Lookup per ISBN — restituisce dati + array di copertine candidate ─────────
 async function lookupByIsbn(isbn) {
   const cleanIsbn = isbn.replace(/[-\s]/g, '')
   if (!/^\d{10,13}$/.test(cleanIsbn)) return null
-  const url = process.env.GOOGLE_BOOKS_API_KEY
-    ? `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}&key=${process.env.GOOGLE_BOOKS_API_KEY}`
+
+  const key = process.env.GOOGLE_BOOKS_API_KEY
+  const gbUrl = key
+    ? `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}&key=${key}`
     : `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`
+
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(6000) })
-    if (!r.ok) return null
-    const data = await r.json()
-    if (!data.totalItems || !data.items?.[0]?.volumeInfo) return null
-    return buildFromGoogleBooks(data.items[0].volumeInfo, cleanIsbn)
-  } catch (_) { return null }
+    const [gbSettled, olSettled] = await Promise.allSettled([
+      fetch(gbUrl, { signal: AbortSignal.timeout(6000) }),
+      fetch(`https://openlibrary.org/isbn/${cleanIsbn}.json`,
+        { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(6000) }),
+    ])
+
+    let gbResult = null, workOlid = null
+
+    if (gbSettled.status === 'fulfilled' && gbSettled.value.ok) {
+      const data = await gbSettled.value.json().catch(() => null)
+      if (data?.totalItems > 0 && data.items?.[0]?.volumeInfo) {
+        gbResult = buildFromGoogleBooks(data.items[0].volumeInfo, cleanIsbn)
+      }
+    }
+
+    if (olSettled.status === 'fulfilled' && olSettled.value.ok) {
+      const olData = await olSettled.value.json().catch(() => null)
+      workOlid = extractWorkOlid(olData)
+    }
+
+    if (gbResult) {
+      const covers = await fetchAllCovers(gbResult.titolo, gbResult.autore?.[0], gbResult.copertina, workOlid, cleanIsbn)
+      return { ...gbResult, covers }
+    }
+  } catch (_) {}
+  return null
 }
 
-// Lookup per titolo+autore (fallback quando non c'è ISBN)
+// ── Lookup per titolo+autore ──────────────────────────────────────────────────
 async function lookupByText(title, author) {
   const q = encodeURIComponent(`intitle:${title}${author ? ` inauthor:${author}` : ''}`)
-  const url = process.env.GOOGLE_BOOKS_API_KEY
-    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&key=${process.env.GOOGLE_BOOKS_API_KEY}`
+  const key = process.env.GOOGLE_BOOKS_API_KEY
+  const url = key
+    ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&key=${key}`
     : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1`
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(6000) })
     if (!r.ok) return null
     const data = await r.json()
     if (!data.totalItems || !data.items?.[0]?.volumeInfo) return null
-    const isbn = data.items[0].volumeInfo.industryIdentifiers
-      ?.find(i => i.type === 'ISBN_13' || i.type === 'ISBN_10')?.identifier || null
-    return buildFromGoogleBooks(data.items[0].volumeInfo, isbn)
+    const v = data.items[0].volumeInfo
+    const isbn = v.industryIdentifiers?.find(i => i.type === 'ISBN_13' || i.type === 'ISBN_10')?.identifier || null
+    const result = buildFromGoogleBooks(v, isbn)
+    const covers = await fetchAllCovers(result.titolo, result.autore?.[0], result.copertina, null)
+    return { ...result, covers }
   } catch (_) { return null }
 }
 
 function buildFromGoogleBooks(v, isbn) {
   let copertina = null
   if (v.imageLinks) {
-    copertina = v.imageLinks.large || v.imageLinks.medium || v.imageLinks.thumbnail || null
+    copertina = v.imageLinks.extraLarge || v.imageLinks.large || v.imageLinks.medium || v.imageLinks.thumbnail || null
     if (copertina) copertina = copertina.replace('&edge=curl', '').replace(/^http:\/\//, 'https://')
   }
   const anno = v.publishedDate ? parseInt(v.publishedDate.substring(0, 4)) || null : null
@@ -50,6 +78,7 @@ function buildFromGoogleBooks(v, isbn) {
     anno_pubblicazione: anno,
     descrizione: v.description || null,
     copertina,
+    covers: copertina ? [copertina] : [],
     genere: [],
     lingua_originale: v.language || null,
     pagine: v.pageCount || null,
@@ -121,7 +150,7 @@ Se non vedi alcun libro: []`,
 
   if (recognized.length === 0) return res.json({ books: [] })
 
-  // 2. Arricchisce ogni libro riconosciuto con metadati da Google Books
+  // 2. Arricchisce ogni libro con metadati + array di copertine candidate
   const books = await Promise.all(
     recognized.slice(0, 12).map(async (item) => {
       const base = {
@@ -140,7 +169,8 @@ Se non vedi alcun libro: []`,
         if (byText) return { ...base, ...byText }
       }
 
-      // Fallback: solo dati dall'AI, nessun ISBN
+      // Fallback: solo AI, cerca comunque copertine per titolo
+      const covers = await fetchAllCovers(item.title, item.author, null, null)
       return {
         ...base,
         source: 'ai-only',
@@ -150,7 +180,8 @@ Se non vedi alcun libro: []`,
         casa_editrice: null,
         anno_pubblicazione: null,
         descrizione: null,
-        copertina: null,
+        copertina: covers[0] || null,
+        covers,
         genere: [],
         lingua_originale: null,
         pagine: null,
