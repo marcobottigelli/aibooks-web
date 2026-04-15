@@ -60,18 +60,6 @@
       margin-bottom: 28px;
     }
 
-    .btn {
-      display: inline-block;
-      background: #a90707;
-      color: #fff;
-      border-radius: 10px;
-      padding: 12px 32px;
-      font-size: 15px;
-      font-weight: 600;
-      text-decoration: none;
-      font-family: 'Montserrat', sans-serif;
-    }
-
     .spinner {
       width: 36px; height: 36px;
       border: 3px solid #f3f3f3;
@@ -99,7 +87,6 @@
       </div>
       <h1>Account confermato!</h1>
       <p>Il tuo account AiBooks è attivo.<br>Torna all'app e accedi con le tue credenziali.</p>
-      <a id="open-app-btn" href="rivbooks://login-callback" class="btn">Apri AiBooks</a>
     </div>
 
     <div id="error">
@@ -130,11 +117,6 @@
       show('error');
     } else if (hash && hash.indexOf('access_token') !== -1) {
       show('success');
-      // Su mobile prova ad aprire l'app passando i token
-      document.getElementById('open-app-btn').href = 'rivbooks://login-callback' + hash;
-      setTimeout(function() {
-        window.location.href = 'rivbooks://login-callback' + hash;
-      }, 800);
     } else {
       // Nessun token nell'URL: la conferma è già avvenuta lato Supabase
       show('success');
