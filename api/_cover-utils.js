@@ -149,14 +149,34 @@ export function extractWorkOlid(olEditionData) {
   return key.split('/').pop() || null  // → "OL1234W"
 }
 
+// ── Helper: verifica che un URL restituisca un'immagine reale (non un placeholder) ─
+// I placeholder "image not available" di Google Books / Open Library sono tipicamente
+// sotto i 5 KB. Le cover reali superano quasi sempre i 10 KB.
+async function isRealCover(url, minBytes = 5000) {
+  try {
+    const r = await fetch(url, {
+      method: 'HEAD',
+      headers: { 'User-Agent': 'AiBooks/1.0' },
+      signal: AbortSignal.timeout(4000),
+    })
+    if (!r.ok) return false
+    const contentType = r.headers.get('content-type') || ''
+    if (!contentType.startsWith('image/')) return false
+    const size = parseInt(r.headers.get('content-length') || '0')
+    // Se content-length non è dichiarato lasciamo passare (Open Library non lo mette sempre)
+    if (size > 0 && size < minBytes) return false
+    return true
+  } catch (_) { return false }
+}
+
 // ── Master: aggrega tutte le fonti ───────────────────────────────────────────
 // title, author: per la ricerca per testo
 // existingCover: eventuale copertina già nota (viene messa prima)
 // workOlid: se disponibile, aggiunge le cover di tutte le edizioni
 // isbn13: se disponibile, usato come fallback Amazon CDN
 export async function fetchAllCovers(title, author, existingCover, workOlid, isbn13) {
-  const covers = []
-  if (existingCover) covers.push(existingCover)
+  const candidates = []
+  if (existingCover) candidates.push(existingCover)
 
   if (title) {
     // Lancia le tre ricerche per testo in parallelo
@@ -172,23 +192,32 @@ export async function fetchAllCovers(title, author, existingCover, workOlid, isb
 
     // Interleave GB + OL-Search per varietà di stile
     const maxAB = Math.max(gbCovers.length, olSCovers.length)
-    for (let i = 0; i < maxAB && covers.length < 10; i++) {
-      if (gbCovers[i]  && !covers.includes(gbCovers[i]))  covers.push(gbCovers[i])
-      if (olSCovers[i] && !covers.includes(olSCovers[i])) covers.push(olSCovers[i])
+    for (let i = 0; i < maxAB && candidates.length < 10; i++) {
+      if (gbCovers[i]  && !candidates.includes(gbCovers[i]))  candidates.push(gbCovers[i])
+      if (olSCovers[i] && !candidates.includes(olSCovers[i])) candidates.push(olSCovers[i])
     }
 
     // Aggiungi copertine da edizioni (Work API) — varietà di edizioni diverse
     for (const u of olWCovers) {
-      if (!covers.includes(u)) covers.push(u)
-      if (covers.length >= 12) break
+      if (!candidates.includes(u)) candidates.push(u)
+      if (candidates.length >= 12) break
     }
   }
 
   // Fallback Amazon CDN — utile per libri non in OL (es. piccoli editori italiani)
-  if (covers.length === 0 && isbn13) {
+  if (candidates.length === 0 && isbn13) {
     const amazonUrl = await amazonCoverFromIsbn(isbn13)
-    if (amazonUrl) covers.push(amazonUrl)
+    if (amazonUrl) candidates.push(amazonUrl)
   }
+
+  // ── Filtra i placeholder: verifica in parallelo che ogni URL sia un'immagine reale ──
+  if (candidates.length === 0) return []
+  const validationResults = await Promise.allSettled(
+    candidates.map(url => isRealCover(url))
+  )
+  const covers = candidates.filter((_, i) =>
+    validationResults[i].status === 'fulfilled' && validationResults[i].value === true
+  )
 
   return covers
 }
