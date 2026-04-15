@@ -621,10 +621,12 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
 
   // ── Fase 1: candidati strutturati in JSON ───────────────────────────────────
   let validatedBooks = []
+  let candidatesGenerated = false
   try {
     const candidates = await getBookCandidates(systemPrompt, messages, apiKey, constraints)
 
     if (candidates.length > 0) {
+      candidatesGenerated = true
       // ── Fase 2: validazione parallela su Google Books + Open Library ─────────
       const results = await Promise.all(
         candidates.map(async (b) => {
@@ -659,8 +661,10 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
     ? `\n⚠ VINCOLO DESTINAZIONE ATTIVO: proponi SOLO libri ambientati a ${constraints.destinazione}.\n`
     : ''
 
-  const validatedSection = validatedBooks.length >= 3
-    ? constraintReminder +
+  let validatedSection
+  if (validatedBooks.length >= 1) {
+    // Almeno un libro verificato: vincola Phase 3 alla lista
+    validatedSection = constraintReminder +
       `\n══ LIBRI VERIFICATI — proponi SOLO questi, nessun altro ══\n` +
       `I seguenti ${validatedBooks.length} libri sono stati confermati come reali da Google Books e Open Library.\n` +
       `Scrivi la risposta seguendo la STRUTTURA RISPOSTA: prima la riga 🔍 Sto cercando:, poi le descrizioni.\n` +
@@ -668,7 +672,16 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
       validatedBooks.map(b =>
         `• "${b.titolo_italiano}"${b.titolo_originale !== b.titolo_italiano ? ` (orig. "${b.titolo_originale}")` : ''} — ${b.autore} (${b.anno})`
       ).join('\n')
-    : constraintReminder
+  } else if (candidatesGenerated) {
+    // Candidati generati ma nessuno ha superato la verifica — massima cautela
+    validatedSection = constraintReminder +
+      `\n⚠ ATTENZIONE — VERIFICA ESTERNA FALLITA O NESSUN LIBRO CONFERMATO:\n` +
+      `La verifica su Google Books e Open Library non ha confermato nessun titolo candidato.\n` +
+      `Proponi SOLO libri di cui sei assolutamente certo (titolo esatto + autore corretto + anno noto).\n` +
+      `Se non sei sicuro al 100% di un titolo, NON proporlo. È preferibile proporre 2-3 titoli certi che 8 incerti.\n`
+  } else {
+    validatedSection = constraintReminder
+  }
 
   const finalSystemPrompt = systemPrompt + validatedSection
 
