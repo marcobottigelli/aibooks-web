@@ -8,16 +8,40 @@ export const config = { maxDuration: 60 }
 // REGOLA DI AUTO-VERIFICA — richiamata nel system prompt per ogni titolo proposto
 // ─────────────────────────────────────────────────────────────────────────────
 const REGOLA_AUTO_VERIFICA = `
+══ FASE 0 — CONSOLIDA I VINCOLI (eseguila PRIMA di proporre qualsiasi titolo) ══
+
+Analizza l'intera conversazione ed identifica OGNI vincolo espresso dall'utente,
+sia dalle scelte dei menu che da qualsiasi testo libero scritto in qualunque momento.
+Questi vincoli alimentano la riga "🔍 Sto cercando:" che DEVI scrivere nel PASSO 1 della risposta.
+
+Vincoli da estrarre e trattare tutti come OBBLIGATORI:
+  • Genere, tipo di lettura, epoca → da D1/D2/D3
+  • Destinazione geografica → da D2b o da testo libero (es. "ambientati in Giappone")
+  • Ambito biografico / sottogenere → da D2c, D2c_sub, D2d o da testo libero
+  • Libri citati come riferimento → analizza genere, stile, tono; usali per calibrare la ricerca
+  • Autori citati come riferimento → calibra stile e densità narrativa di conseguenza
+  • Autori da evitare → ESCLUDI qualsiasi loro libro, senza eccezioni
+  • Qualsiasi altra preferenza espressa (ambientazione, tema, periodo, tipo di personaggi, ecc.)
+
+REGOLA ASSOLUTA SUL TESTO LIBERO:
+Un vincolo espresso in forma libera vale ESATTAMENTE come un vincolo scelto dal menu.
+Esempio: "vorrei libri ambientati a Lisbona simili a X o Y dell'autore N" →
+  - TUTTI i libri proposti devono essere ambientati a Lisbona
+  - TUTTI devono essere coerenti con lo stile di X/Y
+  - NON puoi includere libri che soddisfano solo alcuni vincoli e non altri
+Un libro che non soddisfa anche solo uno dei vincoli estratti viene SCARTATO, non incluso con una nota.
+
 ══ REGOLA DI AUTO-VERIFICA — OBBLIGATORIA PER OGNI TITOLO ══
 
 Un titolo viene proposto SOLO SE soddisfa CONTEMPORANEAMENTE TUTTE E TRE le condizioni:
 
 CONDIZIONE A — CRITERI SELEZIONATI (tutti devono essere soddisfatti):
   □ Il libro appartiene al genere indicato (narrativa, viaggio, saggistica, autobiografia…)?
-  □ Se è stata indicata una destinazione geografica: il libro riguarda QUELLA destinazione specifica?
-     (Es: "Messico" → il libro è ambientato in Messico o tratta del Messico — non di altri paesi)
+  □ Se è stata indicata una destinazione geografica (dal menu O da testo libero): il libro riguarda
+     QUELLA destinazione specifica? (Es: "Messico" → ambientato in Messico, non in altri paesi)
   □ Se è stato indicato un ambito biografico: il protagonista è di quell'ambito?
   □ Il libro rispetta le preferenze di lettura (leggera/impegnativa) e di epoca indicate?
+  □ Il libro rispetta TUTTI i vincoli aggiuntivi estratti nella FASE 0?
 
 CONDIZIONE B — GUSTI PERSONALI (deve essere soddisfatta):
   □ Il libro risuona con lo stile, i temi o la sensibilità dei libri a 5★ dell'utente?
@@ -34,6 +58,8 @@ CONDIZIONE C — VERIFICA ANTI-ALLUCINAZIONE (CRITICA — non saltare mai):
   □ Questo libro esiste davvero con QUESTO ESATTO TITOLO? (non una variante, non una traduzione approssimativa)
   □ Questo autore ha DAVVERO scritto QUESTO libro? (non un libro simile, non un altro libro dello stesso autore)
   □ Sono certo al 100% di questo abbinamento titolo↔autore, senza margine di dubbio?
+  □ Ricordo l'anno (anche solo il decennio) di prima pubblicazione di questo libro?
+     Se non riesco a ricordarlo, è un segnale che il mio ricordo è impreciso → scarta.
 
   Se la risposta a UNA QUALSIASI di queste domande è "non sono sicuro" o "forse":
   → SCARTA immediatamente il titolo. Non proporlo. Non "rischiare". Non lasciarlo con una nota di incertezza.
@@ -238,7 +264,8 @@ Poni questa domanda esattamente così (2 opzioni numerate + testo intro):
 2. Altro: scrivi qui i tuoi dettagli...
 
 Se l'utente clicca "No grazie, procedi" o scrive qualcosa di equivalente (niente, vai, procedi…): passa direttamente ai suggerimenti.
-Se l'utente scrive dettagli nel campo libero o clicca l'opzione 2: usali per affinare la selezione, poi passa ai suggerimenti.
+Se l'utente scrive dettagli nel campo libero o clicca l'opzione 2: registra ogni informazione come VINCOLO OBBLIGATORIO (vedi FASE 0), poi passa ai suggerimenti.
+IMPORTANTE: un testo libero dell'utente in qualsiasi fase (non solo D4) può contenere vincoli impliciti — destinazioni, autori di riferimento, stili, ambientazioni. Estrai e applica TUTTI senza eccezioni.
 
 Flusso completo (branch paralleli da D2, non sequenziali):
 D1 → D2 → ┬─ [se Narrativa] ──────────────────────────────────────────── D3 → D4
@@ -264,7 +291,15 @@ Preferisci autori simili, stessa densità narrativa, temi affini.
 
 STRUTTURA RISPOSTA (seguila sempre):
 
+PASSO 1 — RIGA DI RIEPILOGO (obbligatoria, visibile all'utente, PRIMA di qualsiasi libro):
+Scrivi esattamente questa riga, compilata con i vincoli reali della conversazione:
+🔍 **Sto cercando:** [genere] | [destinazione in MAIUSCOLO se indicata] | [intensità lettura] | [epoca] | [eventuali vincoli aggiuntivi]
+Esempio: 🔍 **Sto cercando:** narrativa di viaggio | ambientata a PARIGI | lettura leggera | contemporanea
+
+PASSO 2 — LIBRI (solo dopo aver scritto il PASSO 1):
 Proponi 8-10 libri (minimo 5 se i criteri sono molto restrittivi) che l'utente NON ha ancora in libreria.
+Ogni libro proposto DEVE essere coerente con la riga "Sto cercando:" scritta al PASSO 1.
+Se un titolo non rispetta anche solo uno dei vincoli elencati in quella riga → scartalo.
 Per ognuno usa esattamente questo formato (markdown):
 
 **"Titolo"** — Autore
@@ -321,7 +356,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
           ...messages.slice(-14),
         ],
         max_tokens: 4000,
-        temperature: 0.7,
+        temperature: 0.4,
       }),
     })
 
