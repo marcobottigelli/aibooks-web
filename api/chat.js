@@ -146,12 +146,13 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'gpt-5-mini',
+        model: 'gpt-4.1',
         messages: [
           { role: 'system', content: systemPrompt + suffix },
           ...messages.slice(-14),
         ],
-        max_completion_tokens: 1100,
+        max_tokens: 1100,
+        temperature: 0.35,
         response_format: { type: 'json_object' },
       }),
       signal: AbortSignal.timeout(22000),
@@ -655,12 +656,13 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-5-mini',
+        model: 'gpt-4.1',
         messages: [
           { role: 'system', content: finalSystemPrompt },
           ...messages.slice(-14),
         ],
-        max_completion_tokens: 4000,
+        max_tokens: 4000,
+        temperature: 0.4,
       }),
     })
 
