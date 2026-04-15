@@ -82,11 +82,51 @@ function sanitize(str) {
   return String(str).replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7E\u00C0-\u024F]/g, c => c).slice(0, 300)
 }
 
+// ── Estrazione vincoli chiave dalla cronologia messaggi (pura JS, senza AI) ───
+// Rileva la risposta dell'utente alla domanda D2b (destinazione geografica)
+// e qualsiasi altro vincolo esplicito scritto in forma libera.
+function extractKeyConstraints(messages) {
+  const constraints = {}
+
+  // Pattern multilingua per la domanda D2b
+  const D2B_PATTERNS = [
+    'destinazione geografica', 'geographical destination', 'destination géographique',
+    'destino geográfico', 'geografisches Ziel', 'bestemming',
+  ]
+
+  for (let i = 0; i < messages.length - 1; i++) {
+    const msg = messages[i]
+    if (msg.role !== 'assistant') continue
+
+    const isD2b = D2B_PATTERNS.some(p => msg.content.toLowerCase().includes(p))
+    if (!isD2b) continue
+
+    const next = messages[i + 1]
+    if (next?.role !== 'user') continue
+
+    const v = next.content.trim()
+    // Scarta risposte che significano "non importa"
+    const isSkip = !v || v === '1' || /non importa|doesn.t matter|peu importe|no importa|egal/i.test(v)
+    if (!isSkip && v.length < 120) {
+      constraints.destinazione = sanitize(v)
+    }
+  }
+
+  return constraints
+}
+
 // ── Fase 1: chiede all'AI una lista candidati in JSON strutturato ─────────────
 // Usa response_format json_object per avere output affidabile da parsare.
 // Ritorna [] se la conversazione è ancora nella fase domande (D1-D4 incompleta).
-async function getBookCandidates(systemPrompt, messages, apiKey) {
-  const suffix = `
+async function getBookCandidates(systemPrompt, messages, apiKey, constraints = {}) {
+  // Vincoli estratti server-side — iniettati in cima per massima priorità
+  const constraintBlock = constraints.destinazione
+    ? `\n⚠ VINCOLO DESTINAZIONE — NON NEGOZIABILE:\n` +
+      `Ogni libro candidato DEVE essere ambientato a ${constraints.destinazione} o riguardarla direttamente.\n` +
+      `Un libro NON ambientato a ${constraints.destinazione} NON deve apparire nella lista, anche se reale.\n`
+    : ''
+
+  const suffix = constraintBlock + `
 
 ══ MODALITÀ RICERCA CANDIDATI ══
 Rispondi ESCLUSIVAMENTE con un oggetto JSON nel formato: {"libri": [...]}
@@ -413,10 +453,13 @@ ${lettiPerAnnoStr || '(nessuno)'}
 DA LEGGERE — ${nDaLegg} titoli (menzionali solo nella sezione finale se pertinenti):
 ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
 
+  // ── Estrai vincoli chiave dalla cronologia (pura JS, zero AI call) ───────────
+  const constraints = extractKeyConstraints(messages)
+
   // ── Fase 1: candidati strutturati in JSON ───────────────────────────────────
   let validatedBooks = []
   try {
-    const candidates = await getBookCandidates(systemPrompt, messages, apiKey)
+    const candidates = await getBookCandidates(systemPrompt, messages, apiKey, constraints)
 
     if (candidates.length > 0) {
       // ── Fase 2: validazione parallela su Google Books + Open Library ─────────
@@ -427,25 +470,27 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
         })
       )
       validatedBooks = results.filter(Boolean)
-      console.log(`[chat] candidati: ${candidates.length}, validati: ${validatedBooks.length}`)
+      console.log(`[chat] candidati: ${candidates.length}, validati: ${validatedBooks.length}, vincoli:`, constraints)
     }
   } catch (e) {
     console.warn('[chat] fase candidati/validazione fallita, uso risposta diretta:', e.message)
   }
 
   // ── Fase 3: risposta finale ──────────────────────────────────────────────────
-  // Se abbiamo ≥ 3 libri validati, iniettiamoli nel prompt come lista vincolante.
-  // L'AI scrive solo le descrizioni dei libri reali confermati.
-  // Se la validazione restituisce troppo poco (fase domande, o errore), risposta libera.
+  const constraintReminder = constraints.destinazione
+    ? `\n⚠ VINCOLO DESTINAZIONE ATTIVO: proponi SOLO libri ambientati a ${constraints.destinazione}.\n`
+    : ''
+
   const validatedSection = validatedBooks.length >= 3
-    ? `\n\n══ LIBRI VERIFICATI — proponi SOLO questi, nessun altro ══\n` +
+    ? constraintReminder +
+      `\n══ LIBRI VERIFICATI — proponi SOLO questi, nessun altro ══\n` +
       `I seguenti ${validatedBooks.length} libri sono stati confermati come reali da Google Books e Open Library.\n` +
       `Scrivi la risposta seguendo la STRUTTURA RISPOSTA: prima la riga 🔍 Sto cercando:, poi le descrizioni.\n` +
       `Non aggiungere titoli non presenti in questa lista.\n` +
       validatedBooks.map(b =>
         `• "${b.titolo_italiano}"${b.titolo_originale !== b.titolo_italiano ? ` (orig. "${b.titolo_originale}")` : ''} — ${b.autore} (${b.anno})`
       ).join('\n')
-    : ''
+    : constraintReminder
 
   const finalSystemPrompt = systemPrompt + validatedSection
 
