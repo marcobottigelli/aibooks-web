@@ -281,29 +281,26 @@ function titlesMatch(candidate, found, threshold = 0.55) {
 }
 
 // ── Fase 2: verifica un libro contro Google Books + Open Library ──────────────
-// Controlla sia l'esistenza che la corrispondenza del titolo — evita falsi positivi
-// dove GB/OL restituisce un libro dello stesso autore con titolo diverso.
-async function searchBookExists(titoloOriginale, titoloItaliano, autore, destinazione = null) {
+// Ritorna null se il libro non è verificato.
+// Ritorna { autoreCorretto } se verificato: autoreCorretto è l'autore reale trovato
+// da GB/OL (può differire da quello del candidato — correggiamo invece di scartare).
+async function verifyBook(titoloOriginale, titoloItaliano, autore, destinazione = null) {
   const TIMEOUT = 5000
   const searchTitle = titoloOriginale || titoloItaliano || ''
-  if (!searchTitle || !autore) return false
+  if (!searchTitle || !autore) return null
 
-  const q = encodeURIComponent(`intitle:${searchTitle} inauthor:${autore}`)
   const gbKey = process.env.GOOGLE_BOOKS_API_KEY
 
-  // Recupera sempre title + subtitle + authors per il confronto; aggiunge description/categories se c'è destinazione
   const baseFields = 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/authors)'
   const fields = destinazione
     ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/authors,volumeInfo/description,volumeInfo/categories)'
     : baseFields
 
-  // GB: cerca solo per titolo (senza inauthor) per evitare bias nella verifica autore
   const qTitleOnly = encodeURIComponent(`intitle:${searchTitle}`)
   const gbUrl = gbKey
     ? `https://www.googleapis.com/books/v1/volumes?q=${qTitleOnly}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
     : `https://www.googleapis.com/books/v1/volumes?q=${qTitleOnly}&maxResults=1&fields=${encodeURIComponent(fields)}`
 
-  // OL: cerca solo per titolo (senza author) per evitare bias nella verifica autore
   const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&limit=1&fields=key,title,author_name`
 
   const [gbResult, olResult] = await Promise.allSettled([
@@ -316,69 +313,84 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
   const gbData = gbResult.status === 'fulfilled' ? gbResult.value : null
   const olData = olResult.status === 'fulfilled' ? olResult.value : null
 
-  // ── Verifica GB: titolo E autore corrispondono al candidato ────────────────────
+  // ── Verifica GB ────────────────────────────────────────────────────────────────
+  // Se il titolo matcha ma l'autore è sbagliato, usiamo l'autore reale da GB
+  // (correzione) invece di scartare il libro — evita che Phase 3 alluci liberamente.
   let gbVerified = false
+  let gbAutoreCorretto = null
+  let gbDataForDest = null
   if ((gbData?.totalItems ?? 0) > 0 && gbData?.items?.[0]?.volumeInfo?.title) {
     const v = gbData.items[0].volumeInfo
     const gbTitle = v.title
     const gbAuthors = v.authors || []
-    // Se GB non restituisce autori, richiede corrispondenza titolo al 90%
     const thr = gbAuthors.length > 0 ? 0.55 : 0.9
     const titleOk = titlesMatch(searchTitle, gbTitle, thr) ||
       (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, gbTitle, thr))
-    const authorOk = authorMatches(autore, gbAuthors)
-    gbVerified = titleOk && authorOk
-    if (!titleOk)
+    if (titleOk) {
+      if (authorMatches(autore, gbAuthors)) {
+        gbVerified = true
+        gbAutoreCorretto = gbAuthors[0] || null
+      } else if (gbAuthors.length > 0) {
+        // Titolo reale, autore sbagliato → correggiamo con l'autore trovato da GB
+        gbVerified = true
+        gbAutoreCorretto = gbAuthors[0]
+        console.log(`[chat] GB author corretto: "${autore}" → "${gbAuthors[0]}" per "${gbTitle}"`)
+      } else {
+        console.log(`[chat] GB title ok ma autore assente (thr=0.9 già applicato): "${gbTitle}"`)
+      }
+    } else {
       console.log(`[chat] GB title mismatch (thr=${thr}): cercato "${searchTitle}", trovato "${gbTitle}"`)
-    else if (!authorOk)
-      console.log(`[chat] GB author mismatch: cercato "${autore}", trovato "${gbAuthors.join(', ')}" per "${gbTitle}"`)
+    }
+    if (gbVerified) gbDataForDest = v
   }
 
-  // ── Verifica OL: titolo E autore corrispondono al candidato ────────────────────
+  // ── Verifica OL ────────────────────────────────────────────────────────────────
   let olVerified = false
+  let olAutoreCorretto = null
   if ((olData?.numFound ?? 0) > 0 && olData?.docs?.[0]?.title) {
     const olTitle = olData.docs[0].title
     const olAuthors = olData.docs[0].author_name || []
-    // Se OL non restituisce autori, richiede corrispondenza titolo al 90%
     const thr = olAuthors.length > 0 ? 0.55 : 0.9
     const titleOk = titlesMatch(searchTitle, olTitle, thr) ||
       (titoloItaliano && titoloItaliano !== searchTitle && titlesMatch(titoloItaliano, olTitle, thr))
-    const authorOk = authorMatches(autore, olAuthors)
-    olVerified = titleOk && authorOk
-    if (!titleOk)
+    if (titleOk) {
+      if (authorMatches(autore, olAuthors)) {
+        olVerified = true
+        olAutoreCorretto = olAuthors[0] || null
+      } else if (olAuthors.length > 0) {
+        olVerified = true
+        olAutoreCorretto = olAuthors[0]
+        console.log(`[chat] OL author corretto: "${autore}" → "${olAuthors[0]}" per "${olTitle}"`)
+      } else {
+        console.log(`[chat] OL title ok ma autore assente (thr=0.9 già applicato): "${olTitle}"`)
+      }
+    } else {
       console.log(`[chat] OL title mismatch (thr=${thr}): cercato "${searchTitle}", trovato "${olTitle}"`)
-    else if (!authorOk)
-      console.log(`[chat] OL author mismatch: cercato "${autore}", trovato "${olAuthors.join(', ')}" per "${olTitle}"`)
+    }
   }
 
-  if (!gbVerified && !olVerified) return false
+  if (!gbVerified && !olVerified) return null
 
-  // ── Verifica di pertinenza geografica (solo se la destinazione è attiva) ──────
-  if (destinazione && gbVerified && gbData?.items?.[0]) {
-    const v = gbData.items[0].volumeInfo || {}
+  // Autore corretto: GB ha priorità su OL (dati più accurati)
+  const autoreCorretto = gbAutoreCorretto || olAutoreCorretto || null
+
+  // ── Verifica pertinenza geografica (solo se destinazione attiva) ───────────────
+  if (destinazione && gbDataForDest) {
+    const v = gbDataForDest
     const hasDescription = !!(v.description || (v.categories && v.categories.length > 0))
-
-    const candidateTitleLower = searchTitle.toLowerCase()
     const keywords = getDestinationKeywords(destinazione)
-    const titleContainsDest = keywords.some(kw => candidateTitleLower.includes(kw.toLowerCase()))
-    if (titleContainsDest) return true
-
+    const titleContainsDest = keywords.some(kw => searchTitle.toLowerCase().includes(kw.toLowerCase()))
+    if (titleContainsDest) return { autoreCorretto }
     if (hasDescription) {
-      const text = [
-        v.title || '', v.subtitle || '',
-        v.description || '',
-        ...(v.categories || []),
-      ].join(' ').toLowerCase()
-
-      const relevant = keywords.some(kw => text.includes(kw.toLowerCase()))
-      if (!relevant) {
-        console.log(`[chat] scartato (non riguarda "${destinazione}"): "${searchTitle}" — ${autore}`)
-        return false
+      const text = [v.title || '', v.subtitle || '', v.description || '', ...(v.categories || [])].join(' ').toLowerCase()
+      if (!keywords.some(kw => text.includes(kw.toLowerCase()))) {
+        console.log(`[chat] scartato (non riguarda "${destinazione}"): "${searchTitle}" — ${autoreCorretto || autore}`)
+        return null
       }
     }
   }
 
-  return true
+  return { autoreCorretto }
 }
 
 export default async function handler(req, res) {
@@ -654,8 +666,13 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
       // ── Fase 2: validazione parallela su Google Books + Open Library ─────────
       const results = await Promise.all(
         candidates.map(async (b) => {
-          const found = await searchBookExists(b.titolo_originale, b.titolo_italiano, b.autore, constraints.destinazione)
-          return found ? b : null
+          const verified = await verifyBook(b.titolo_originale, b.titolo_italiano, b.autore, constraints.destinazione)
+          if (!verified) return null
+          // Se GB/OL ha trovato un autore diverso, lo correggiamo prima di passarlo a Phase 3
+          if (verified.autoreCorretto && verified.autoreCorretto !== b.autore) {
+            return { ...b, autore: verified.autoreCorretto }
+          }
+          return b
         })
       )
       validatedBooks = results.filter(Boolean)
