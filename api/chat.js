@@ -288,7 +288,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
           { role: 'system', content: systemPrompt },
           ...messages.slice(-14),
         ],
-        max_tokens: 2500,
+        max_tokens: 4000,
         temperature: 0.7,
       }),
     })
