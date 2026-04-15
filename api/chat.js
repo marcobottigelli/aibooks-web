@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' })
 
-  const { messages, books, userName: rawName } = req.body
+  const { messages, books, userName: rawName, language: rawLang } = req.body
   if (!messages?.length) return res.status(400).json({ error: 'messages mancanti' })
   if (!Array.isArray(books)) return res.status(400).json({ error: 'books mancanti' })
 
@@ -54,6 +54,15 @@ export default async function handler(req, res) {
   const userName = (typeof rawName === 'string' && rawName.length <= 50)
     ? rawName.replace(/[<>"'`]/g, '').trim() || 'tu'
     : 'tu'
+
+  // ── Lingua di risposta ──────────────────────────────────────────────────────
+  const LANGUAGE_LABELS = {
+    it: 'italiano', en: 'English', es: 'español', fr: 'français',
+    de: 'Deutsch', pt: 'português', ja: '日本語', zh: '中文简体',
+    nl: 'Nederlands', pl: 'polski',
+  }
+  const langCode = (typeof rawLang === 'string' && LANGUAGE_LABELS[rawLang]) ? rawLang : 'it'
+  const responseLang = LANGUAGE_LABELS[langCode]
 
   // ── Elabora libri dal client ────────────────────────────────────────────────
   const tuttiLetti    = books.filter(b => b.stato_lettura === 'letto')
@@ -112,7 +121,8 @@ export default async function handler(req, res) {
 
   // ── System prompt ───────────────────────────────────────────────────────────
   const systemPrompt = `Sei l'assistente letterario personale di ${userName}.
-Rispondi sempre in italiano, tono caldo e appassionato.
+LINGUA DI RISPOSTA: Rispondi SEMPRE in ${responseLang}. Tutte le domande, i suggerimenti e le risposte devono essere in ${responseLang}.
+Tono caldo e appassionato.
 
 ══ FLUSSO SUGGERIMENTI — segui questo ordine RIGOROSO ══
 
