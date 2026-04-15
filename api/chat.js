@@ -222,9 +222,31 @@ function getDestinationKeywords(dest) {
   return [d] // fallback: la destinazione stessa come keyword
 }
 
+// ── Confronto titoli: verifica che il titolo trovato corrisponda a quello cercato ─
+// Normalizza, rimuove articoli e punteggiatura, poi controlla sovrapposizione parole.
+function titlesMatch(candidate, found) {
+  const stop = new Set(['il','lo','la','i','gli','le','un','una','uno','the','a','an',
+    'de','del','della','dei','degli','delle','di','da','in','e','ed','el','les','der','die','das'])
+  const norm = s => (s || '').toLowerCase()
+    .replace(/[^\w\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length > 2 && !stop.has(w))
+  const cWords = norm(candidate)
+  const fWords = new Set(norm(found))
+  if (cWords.length === 0 || fWords.size === 0) return false
+  // Corrispondenza esatta normalizzata
+  if (cWords.join(' ') === [...fWords].join(' ')) return true
+  // Il titolo trovato contiene come sottostringa quello cercato (titoli tradotti/abbreviati)
+  const fStr = [...fWords].join(' ')
+  const cStr = cWords.join(' ')
+  if (fStr.includes(cStr) || cStr.includes(fStr)) return true
+  // Almeno il 55% delle parole significative del candidato compaiono nel trovato
+  const matches = cWords.filter(w => fWords.has(w))
+  return matches.length / cWords.length >= 0.55
+}
+
 // ── Fase 2: verifica un libro contro Google Books + Open Library ──────────────
-// Se è attiva una destinazione, legge anche la descrizione/categorie del libro
-// e verifica che la destinazione sia effettivamente menzionata.
+// Controlla sia l'esistenza che la corrispondenza del titolo — evita falsi positivi
+// dove GB/OL restituisce un libro dello stesso autore con titolo diverso.
 async function searchBookExists(titoloOriginale, titoloItaliano, autore, destinazione = null) {
   const TIMEOUT = 5000
   const searchTitle = titoloOriginale || titoloItaliano || ''
@@ -233,16 +255,18 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
   const q = encodeURIComponent(`intitle:${searchTitle} inauthor:${autore}`)
   const gbKey = process.env.GOOGLE_BOOKS_API_KEY
 
-  // Se c'è una destinazione, recupera anche titolo/descrizione/categorie per verificarla
+  // Recupera sempre title + subtitle per il confronto; aggiunge description/categories se c'è destinazione
+  const baseFields = 'totalItems,items(volumeInfo/title,volumeInfo/subtitle)'
   const fields = destinazione
     ? 'totalItems,items(volumeInfo/title,volumeInfo/subtitle,volumeInfo/description,volumeInfo/categories)'
-    : 'totalItems'
+    : baseFields
 
   const gbUrl = gbKey
     ? `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}&key=${gbKey}`
     : `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&fields=${encodeURIComponent(fields)}`
 
-  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key`
+  // OL: chiede anche il titolo per verificarlo
+  const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(searchTitle)}&author=${encodeURIComponent(autore)}&limit=1&fields=key,title`
 
   const [gbResult, olResult] = await Promise.allSettled([
     fetch(gbUrl, { headers: { 'User-Agent': 'AiBooks/1.0' }, signal: AbortSignal.timeout(TIMEOUT) })
@@ -251,26 +275,45 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
       .then(r => r.ok ? r.json() : null).catch(() => null),
   ])
 
-  const gbData  = gbResult.status === 'fulfilled' ? gbResult.value : null
-  const gbFound = (gbData?.totalItems ?? 0) > 0
-  const olFound = olResult.status === 'fulfilled' && (olResult.value?.numFound ?? 0) > 0
+  const gbData = gbResult.status === 'fulfilled' ? gbResult.value : null
+  const olData = olResult.status === 'fulfilled' ? olResult.value : null
 
-  if (!gbFound && !olFound) return false
+  // ── Verifica GB: esiste E il titolo restituito corrisponde al candidato ───────
+  let gbVerified = false
+  if ((gbData?.totalItems ?? 0) > 0 && gbData?.items?.[0]?.volumeInfo?.title) {
+    const gbTitle = gbData.items[0].volumeInfo.title
+    gbVerified = titlesMatch(searchTitle, gbTitle)
+    if (!gbVerified) {
+      // Prova anche col titolo italiano come fallback (libri tradotti)
+      if (titoloItaliano && titoloItaliano !== searchTitle)
+        gbVerified = titlesMatch(titoloItaliano, gbTitle)
+    }
+    if (!gbVerified)
+      console.log(`[chat] GB title mismatch: cercato "${searchTitle}", trovato "${gbTitle}"`)
+  }
 
-  // ── Verifica di pertinenza geografica ──────────────────────────────────────
-  // Se c'è una destinazione e Google Books ha restituito metadati, controlla
-  // che la descrizione/categorie/titolo menzionino la destinazione.
-  // Se la descrizione è assente (Google Books non la fornisce sempre),
-  // lasciamo passare il libro — evita falsi negativi su libri ben noti.
-  if (destinazione && gbFound && gbData?.items?.[0]) {
+  // ── Verifica OL: esiste E il titolo restituito corrisponde al candidato ───────
+  let olVerified = false
+  if ((olData?.numFound ?? 0) > 0 && olData?.docs?.[0]?.title) {
+    const olTitle = olData.docs[0].title
+    olVerified = titlesMatch(searchTitle, olTitle)
+    if (!olVerified && titoloItaliano && titoloItaliano !== searchTitle)
+      olVerified = titlesMatch(titoloItaliano, olTitle)
+    if (!olVerified)
+      console.log(`[chat] OL title mismatch: cercato "${searchTitle}", trovato "${olTitle}"`)
+  }
+
+  if (!gbVerified && !olVerified) return false
+
+  // ── Verifica di pertinenza geografica (solo se la destinazione è attiva) ──────
+  if (destinazione && gbVerified && gbData?.items?.[0]) {
     const v = gbData.items[0].volumeInfo || {}
     const hasDescription = !!(v.description || (v.categories && v.categories.length > 0))
 
-    // Se il titolo originale del candidato stesso contiene la destinazione → passa sempre
     const candidateTitleLower = searchTitle.toLowerCase()
     const keywords = getDestinationKeywords(destinazione)
     const titleContainsDest = keywords.some(kw => candidateTitleLower.includes(kw.toLowerCase()))
-    if (titleContainsDest) return true  // titolo autoesplicativo, nessun dubbio
+    if (titleContainsDest) return true
 
     if (hasDescription) {
       const text = [
@@ -280,7 +323,6 @@ async function searchBookExists(titoloOriginale, titoloItaliano, autore, destina
       ].join(' ').toLowerCase()
 
       const relevant = keywords.some(kw => text.includes(kw.toLowerCase()))
-
       if (!relevant) {
         console.log(`[chat] scartato (non riguarda "${destinazione}"): "${searchTitle}" — ${autore}`)
         return false
