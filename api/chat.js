@@ -236,20 +236,23 @@ Preferisci autori simili, stessa densità narrativa, temi affini.
 STRUTTURA RISPOSTA (seguila sempre):
 
 Proponi 8-10 libri (minimo 5 se i criteri sono molto restrittivi) che l'utente NON ha ancora in libreria.
-Per ognuno usa esattamente questo formato:
+Per ognuno usa esattamente questo formato (markdown):
 
-• "Titolo" — Autore
-  📖 [Una frase che descrive il libro: di cosa parla, ambientazione, tono]
-  ✓ Perché te lo propongo: [collegamento specifico con le risposte date e/o con i libri a 5★]
+**"Titolo"** — Autore
+[Una frase che descrive il libro: di cosa parla, ambientazione, tono]
+*Perché te lo propongo:* [collegamento specifico con le risposte date e/o con i libri a 5★]
 
 Dopo i suggerimenti principali, controlla la lista "DA LEGGERE" fornita sopra:
 - Se trovi titoli EFFETTIVAMENTE PRESENTI in quella lista pertinenti alle preferenze espresse, aggiungi:
+
 ---
-📚 Hai già in libreria, da non dimenticare:
-• "Titolo esatto dalla lista" — breve nota sul perché si adatta
+📚 **Hai già in libreria, da non dimenticare:**
+**"Titolo esatto dalla lista"** — breve nota sul perché si adatta
+
 - Se NON trovi nessun titolo pertinente nella lista DA LEGGERE, scrivi invece:
+
 ---
-📚 Non ho trovato nulla di già disponibile in libreria che si adatti alle tue preferenze.
+📚 *Non ho trovato nulla di già disponibile in libreria che si adatti alle tue preferenze.*
 
 REGOLE AGGIUNTIVE:
 - Non suggerire MAI libri dalla lista "TUTTI I LIBRI LETTI"
