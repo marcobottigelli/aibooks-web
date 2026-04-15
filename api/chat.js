@@ -146,7 +146,7 @@ Ogni elemento dell'array DEVE avere ESATTAMENTE questi campi:
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'gpt-4.1',
+        model: 'gpt-4.1-mini',
         messages: [
           { role: 'system', content: systemPrompt + suffix },
           ...messages.slice(-14),
@@ -685,38 +685,61 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
 
   const finalSystemPrompt = systemPrompt + validatedSection
 
-  try {
-    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1',
-        messages: [
-          { role: 'system', content: finalSystemPrompt },
-          ...messages.slice(-14),
-        ],
-        max_tokens: 4000,
-        temperature: 0.4,
-      }),
-    })
+  const phase3Body = JSON.stringify({
+    model: 'gpt-4.1',
+    messages: [
+      { role: 'system', content: finalSystemPrompt },
+      ...messages.slice(-14),
+    ],
+    max_tokens: 4000,
+    temperature: 0.4,
+  })
 
-    let data
-    try { data = await openaiRes.json() } catch (_) {
-      return res.status(500).json({ error: 'Risposta non valida da OpenAI' })
+  // Phase 3 con retry automatico su rate limit (429)
+  const MAX_RETRIES = 2
+  let lastError = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: phase3Body,
+      })
+
+      let data
+      try { data = await openaiRes.json() } catch (_) {
+        return res.status(500).json({ error: 'Risposta non valida da OpenAI' })
+      }
+
+      if (openaiRes.status === 429) {
+        // Rate limit: aspetta il tempo suggerito da OpenAI o 5s di default
+        const retryAfterMs = (() => {
+          const msg = data.error?.message || ''
+          const match = msg.match(/try again in ([\d.]+)s/)
+          return match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 5000
+        })()
+        console.warn(`[chat] rate limit 429, retry ${attempt + 1}/${MAX_RETRIES} dopo ${retryAfterMs}ms`)
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, retryAfterMs))
+          continue
+        }
+        lastError = data.error?.message || 'Rate limit'
+        break
+      }
+
+      if (!openaiRes.ok) {
+        const errMsg = data.error?.message || 'unknown'
+        console.error('[chat] OpenAI error:', errMsg)
+        return res.status(500).json({ error: 'Errore del servizio AI. Riprova tra qualche secondo.' })
+      }
+
+      const content = data.choices?.[0]?.message?.content
+      if (!content) return res.status(500).json({ error: 'Risposta AI vuota' })
+      return res.json({ content })
+    } catch (e) {
+      console.error('[chat] fetch error:', e.message)
+      return res.status(500).json({ error: 'Errore di connessione verso OpenAI' })
     }
-    if (!openaiRes.ok) {
-      const errMsg = data.error?.message || 'unknown'
-      console.error('[chat] OpenAI error:', errMsg)
-      return res.status(500).json({ error: errMsg })
-    }
-    const content = data.choices?.[0]?.message?.content
-    if (!content) return res.status(500).json({ error: 'Risposta AI vuota' })
-    return res.json({ content })
-  } catch (e) {
-    console.error('[chat] fetch error:', e.message)
-    return res.status(500).json({ error: 'Errore di connessione verso OpenAI' })
   }
+  return res.status(429).json({ error: 'Servizio temporaneamente sovraccarico. Riprova tra qualche secondo.' })
 }
