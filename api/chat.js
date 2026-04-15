@@ -672,7 +672,7 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
     }
     if (!openaiRes.ok) {
       console.error('[chat] OpenAI error:', data.error?.message)
-      return res.status(500).json({ error: 'Errore del servizio AI. Riprova tra qualche secondo.' })
+      return res.status(500).json({ error: data.error?.message || 'Errore del servizio AI. Riprova tra qualche secondo.' })
     }
     const content = data.choices?.[0]?.message?.content
     if (!content) return res.status(500).json({ error: 'Risposta AI vuota' })
