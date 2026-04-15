@@ -10,7 +10,7 @@ export const config = { maxDuration: 60 }
 const REGOLA_AUTO_VERIFICA = `
 ══ REGOLA DI AUTO-VERIFICA — OBBLIGATORIA PER OGNI TITOLO ══
 
-Un titolo viene proposto SOLO SE soddisfa CONTEMPORANEAMENTE entrambe le condizioni:
+Un titolo viene proposto SOLO SE soddisfa CONTEMPORANEAMENTE TUTTE E TRE le condizioni:
 
 CONDIZIONE A — CRITERI SELEZIONATI (tutti devono essere soddisfatti):
   □ Il libro appartiene al genere indicato (narrativa, viaggio, saggistica, autobiografia…)?
@@ -23,11 +23,29 @@ CONDIZIONE B — GUSTI PERSONALI (deve essere soddisfatta):
   □ Il libro risuona con lo stile, i temi o la sensibilità dei libri a 5★ dell'utente?
      Confronta esplicitamente: autore simile, densità narrativa analoga, temi affini, stesso tipo di emozione.
 
-→ Se ENTRAMBE le condizioni A e B sono soddisfatte: aggiungi il titolo.
+CONDIZIONE C — VERIFICA ANTI-ALLUCINAZIONE (CRITICA — non saltare mai):
+  Questa condizione esiste perché i modelli AI commettono errori specifici sui libri:
+  inventano titoli che non esistono, oppure attribuiscono libri reali ad autori sbagliati.
+  Esempi di errori VIETATI (accaduti realmente):
+    ✗ "Le farfalle di Sarajevo" attribuito a David Albahari — titolo/abbinamento non verificato
+    ✗ "Il dolore di Sarajevo" di Serif Patkovic — autore probabilmente inventato
+
+  Per ogni titolo che stai per proporre, rispondi mentalmente a TUTTE queste domande:
+  □ Questo libro esiste davvero con QUESTO ESATTO TITOLO? (non una variante, non una traduzione approssimativa)
+  □ Questo autore ha DAVVERO scritto QUESTO libro? (non un libro simile, non un altro libro dello stesso autore)
+  □ Sono certo al 100% di questo abbinamento titolo↔autore, senza margine di dubbio?
+
+  Se la risposta a UNA QUALSIASI di queste domande è "non sono sicuro" o "forse":
+  → SCARTA immediatamente il titolo. Non proporlo. Non "rischiare". Non lasciarlo con una nota di incertezza.
+  → Sostituiscilo con un titolo di cui sei COMPLETAMENTE certo.
+
+  Regola d'oro: è preferibile proporre 4 titoli verificati al 100% piuttosto che 8 titoli
+  di cui alcuni potrebbero essere inventati o mal attribuiti.
+
+→ Se TUTTE E TRE le condizioni A, B e C sono soddisfatte: aggiungi il titolo.
 → Se anche solo UNA condizione non è soddisfatta: scarta il titolo e trovane un altro.
 → Obiettivo: 8-10 titoli. Se applicando questi criteri riesci a trovarne solo 5 di alta qualità, proponi 5.
    MAI scendere sotto 5. MAI allentare i criteri per arrivare a 10: qualità > quantità.
-   NON proporre titoli di cui non sei certo al 100% — meglio fermarsi a 5 titoli certi che inventarne.
 
 Applica questa verifica a CIASCUN titolo individualmente, in sequenza, prima di includerlo nell'elenco.
 `
