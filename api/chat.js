@@ -196,6 +196,20 @@ const DEST_KEYWORDS = {
   'vietnam':     ['vietnam', 'vietnamese', 'saigon', 'hanoi', 'indochina', 'indocina', 'mekong'],
   'cuba':        ['cuba', 'cuban', 'cubano', 'havana', 'avana', 'caribbean', 'caraibi'],
   'israele':     ['israel', 'israele', 'jerusalem', 'gerusalemme', 'tel aviv', 'palestina', 'palestine'],
+  'barcellona':  ['barcelona', 'barcellona', 'catalonia', 'catalogna', 'catalan', 'catalano', 'gothic quarter', 'barri gotic', 'sagrada familia', 'gaudi', 'ramblas'],
+  'barcelona':   ['barcelona', 'barcellona', 'catalonia', 'catalogna', 'catalan', 'gaudi', 'ramblas'],
+  'vienna':      ['vienna', 'wien', 'austria', 'austrian', 'austriaco', 'danube', 'danubio', 'habsburg', 'asburgo'],
+  'lisbona':     ['lisbon', 'lisbona', 'portugal', 'portogallo', 'portuguese', 'portoghese', 'tejo', 'tagus', 'fado', 'alfama'],
+  'lisbon':      ['lisbon', 'lisbona', 'portugal', 'portogallo', 'tejo', 'fado', 'alfama'],
+  'praga':       ['prague', 'praga', 'czech', 'ceco', 'bohemia', 'boemia', 'kafka', 'moldau', 'moldava'],
+  'prague':      ['prague', 'praga', 'czech', 'bohemia', 'kafka', 'moldau'],
+  'budapest':    ['budapest', 'hungary', 'ungheria', 'hungarian', 'ungherese', 'danube', 'danubio'],
+  'mosca':       ['moscow', 'mosca', 'russia', 'russian', 'russo', 'kremlin', 'cremlino', 'siberia'],
+  'moscow':      ['moscow', 'mosca', 'russia', 'russian', 'kremlin'],
+  'amsterdam':   ['amsterdam', 'netherlands', 'olanda', 'dutch', 'olandese', 'holland', 'canal', 'canale'],
+  'dubai':       ['dubai', 'uae', 'emirates', 'emirati', 'persian gulf', 'golfo persico'],
+  'bangkok':     ['bangkok', 'thailand', 'tailandia', 'thai', 'siam', 'mekong'],
+  'sydney':      ['sydney', 'australia', 'australian', 'australiano', 'outback'],
 }
 
 function getDestinationKeywords(dest) {
@@ -553,6 +567,14 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
         })
       )
       validatedBooks = results.filter(Boolean)
+      // Deduplicazione: rimuove titoli con stesso titolo_originale + autore
+      const seen = new Set()
+      validatedBooks = validatedBooks.filter(b => {
+        const key = `${b.titolo_originale}|${b.autore}`.toLowerCase()
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
       console.log(`[chat] candidati: ${candidates.length}, validati: ${validatedBooks.length}, vincoli:`, constraints)
     }
   } catch (e) {
