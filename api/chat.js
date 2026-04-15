@@ -575,6 +575,13 @@ ${daLeggereRaw.map(fmtBase).join('\n') || '(lista vuota)'}`
         seen.add(key)
         return true
       })
+      // Rimuovi libri già letti dall'utente (confronto per titolo, case-insensitive)
+      const lettiSet = new Set(tuttiLetti.map(b => (b.titolo || '').toLowerCase().trim()))
+      validatedBooks = validatedBooks.filter(b => {
+        const tIt = (b.titolo_italiano || '').toLowerCase().trim()
+        const tOr = (b.titolo_originale || '').toLowerCase().trim()
+        return !lettiSet.has(tIt) && !lettiSet.has(tOr)
+      })
       console.log(`[chat] candidati: ${candidates.length}, validati: ${validatedBooks.length}, vincoli:`, constraints)
     }
   } catch (e) {
